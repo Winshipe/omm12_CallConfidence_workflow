@@ -4,9 +4,18 @@
 
 # ── References ──────────────────────────────────────────────────────────────
 # Keys are short IDs used throughout the pipeline.
+# Values are paths to the reference FASTA files.
 references:
   ref_A: "resources/references/ref_A.fasta"
   ref_B: "resources/references/ref_B.fasta"
+
+# ── Replicates ───────────────────────────────────────────────────────────────
+# Number of independent replicates to run for mutation, read simulation,
+# blending, and variant calling.  Each replicate uses a different random seed
+# so that mutations and simulated reads are independent across replicates.
+# Replicates are labelled rep1, rep2, ..., repN.
+# Assessment results are collected across all replicates into one summary table.
+replicates: 3
 
 # ── Mutation model ──────────────────────────────────────────────────────────
 mutation:
@@ -15,15 +24,18 @@ mutation:
   # Tamura-Nei-specific parameters (ignored for Jukes-Cantor)
   kappa: 2.0                   # transition / transversion ratio
   gc_freq: 0.5                 # equilibrium GC frequency (pi_G + pi_C)
-  seed: 42
+  # Base random seed.  Each replicate derives its own seed from this value
+  # (base_seed + replicate_index) so results are fully reproducible.
+  base_seed: 42
 
 # ── Annotation ───────────────────────────────────────────────────────────────
+# Annotation is run once per reference genome (not per replicate).
 annotation:
   mmseqs_databases:
-    - "resources/databases/ISfinder_mmseqs"
-    - "resources/databases/Dfam_TE_mmseqs"
-  mmseqs_sensitivity: 7.5      # -s flag
-  mmseqs_evalue: 1.0e-5
+    ISfinder: "resources/databases/ISfinder_mmseqs"
+    Dfam_TE:  "resources/databases/Dfam_TE_mmseqs"
+  split_mem_limit: "164G"
+  max_memory: "196G"
   threads: 8
 
 # ── Read simulation (ART) ────────────────────────────────────────────────────
@@ -32,21 +44,26 @@ simulation:
   read_length: 150
   mean_fragment_length: 400
   std_fragment_length: 50
-  coverage: 50                 # fold coverage per reference
-  # Optional: supply real reads to learn error profile from
-  # Leave as null to use ART built-in MiSeq profile.
-  empirical_reads_R1: null     # "resources/empirical/real_R1.fastq.gz"
-  empirical_reads_R2: null     # "resources/empirical/real_R2.fastq.gz"
-  seed: 42
+  coverage: 50                 # fold coverage per reference per replicate
+  # Optional: supply real reads to learn a custom sequencing error profile.
+  # Leave as null to use ART's built-in MiSeq (MSv3) profile.
+  empirical_reads_R1: null     # e.g. "resources/empirical/real_R1.fastq.gz"
+  empirical_reads_R2: null     # e.g. "resources/empirical/real_R2.fastq.gz"
   threads: 4
 
 # ── Read blending ────────────────────────────────────────────────────────────
-# Each scenario is a list of contributions: {ref_id, mutated_fraction, abundance}
-# abundances are relative (normalised internally).
+# Each scenario is a list of contributions.
+# For each contribution, specify:
+#   ref_id            : which reference (must match a key under 'references')
+#   mutated_fraction  : fraction of reads drawn from the mutated version (0–1)
+#   abundance         : relative abundance (values are normalised to sum to 1)
+#
+# The same scenario definition is used for every replicate; only the underlying
+# mutations and simulated reads differ between replicates.
 scenarios:
   scenario_equal_mix:
     - ref_id: ref_A
-      mutated_fraction: 0.5    # fraction of reads drawn from mutated version
+      mutated_fraction: 0.5
       abundance: 1.0
     - ref_id: ref_B
       mutated_fraction: 0.5
@@ -65,14 +82,15 @@ scenarios:
       mutated_fraction: 1.0
       abundance: 1.0
 
-# Total read pairs to produce per blended scenario
+# Total read pairs to produce per blended scenario per replicate
 blend_total_reads: 1000000
 
 # ── Variant calling (breseq) ─────────────────────────────────────────────────
 variant_calling:
-  breseq_extra_flags: ""       # e.g. "--polymorphism-prediction"
+  breseq_extra_flags: ""       # additional flags passed directly to breseq
   threads: 8
 
 # ── Assessment ───────────────────────────────────────────────────────────────
 assessment:
-  min_quality: 20              # minimum breseq quality to consider a call
+  # Minimum breseq QUAL score to count a variant call as a true positive.
+  min_quality: 20

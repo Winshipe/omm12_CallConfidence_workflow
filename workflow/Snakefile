@@ -1,9 +1,36 @@
 """
-Main Snakefile — orchestrates all sub-workflows.
+Snakefile — top-level orchestrator for the variant-calling benchmark pipeline.
+==============================================================================
 
-Sub-workflows are kept in workflow/rules/ and included here.
-Each section can also be run independently via --snakefile workflow/rules/<module>.smk
-after setting the config correctly.
+Sub-workflows are defined in workflow/rules/ and included below.  Each can
+also be run in isolation via:
+    snakemake --snakefile workflow/rules/<module>.smk --configfile config/config.yaml
+
+Pipeline stages (in order)
+--------------------------
+1. mutate          – introduce random substitutions into each reference FASTA.
+                     Run independently for every (ref_id × replicate) pair so
+                     that each replicate has its own unique set of mutations.
+2. annotate        – identify transposable elements and insertion sequences in
+                     each reference using MMseqs2.  Run once per reference
+                     (annotation does not change between replicates).
+3. simulate_reads  – use ART to simulate MiSeq paired-end reads from the
+                     (un)mutated references for every (ref_id × replicate).
+4. blend_reads     – combine simulated reads at the abundances and mutated
+                     fractions defined in config["scenarios"], producing one
+                     FASTQ pair per (scenario × replicate).
+5. variant_calling – align blended reads to the unmutated reference(s) and
+                     call variants with breseq, one run per (scenario × replicate).
+6. assess          – compare breseq calls to the ground-truth mutation tables.
+                     Individual (scenario × replicate) TSVs are produced first,
+                     then aggregated into one summary TSV per scenario.
+
+Replicates
+----------
+The number of replicates is set by config["replicates"].  Replicates are
+labelled rep1, rep2, …, repN.  Each replicate uses a deterministically derived
+random seed (base_seed + replicate_index) so that results are fully
+reproducible while still being statistically independent.
 """
 
 configfile: "config/config.yaml"
@@ -17,34 +44,57 @@ include: "rules/assess.smk"
 
 
 # ---------------------------------------------------------------------------
+# Derive the list of replicate labels from config (e.g. ["rep1", "rep2", "rep3"])
+# ---------------------------------------------------------------------------
+
+REPLICATES = [f"rep{i+1}" for i in range(config["replicates"])]
+
+
+# ---------------------------------------------------------------------------
 # Top-level target rule — request all final outputs
 # ---------------------------------------------------------------------------
 
 rule all:
     input:
-        # Ground-truth mutation tables
+        # ── Ground-truth mutation tables (one per ref × replicate) ──────────
         expand(
-            "results/mutated/{ref_id}/{ref_id}.mutations.tsv",
+            "results/mutated/{ref_id}/{replicate}/{ref_id}.mutations.tsv",
             ref_id=config["references"],
+            replicate=REPLICATES,
         ),
-        # Transposable-element / repeat annotations
+
+        # ── Repeat / TE annotation (one per reference, replicate-independent) ─
         expand(
             "results/annotation/{ref_id}/{ref_id}.challenging.tsv",
             ref_id=config["references"],
         ),
-        # Blended scenario FASTQ pairs
+
+        # ── Blended read FASTQ pairs (one per scenario × replicate) ─────────
         expand(
-            ["results/blended/{scenario}/{scenario}_R1.fastq.gz",
-             "results/blended/{scenario}/{scenario}_R2.fastq.gz"],
+            [
+                "results/blended/{scenario}/{replicate}/{scenario}_R1.fastq.gz",
+                "results/blended/{scenario}/{replicate}/{scenario}_R2.fastq.gz",
+            ],
             scenario=config["scenarios"],
+            replicate=REPLICATES,
         ),
-        # breseq variant-call output directories
+
+        # ── breseq variant calls (one per scenario × replicate) ─────────────
         expand(
-            "results/breseq/{scenario}/output/output.vcf",
+            "results/breseq/{scenario}/{replicate}/output/output.vcf",
             scenario=config["scenarios"],
+            replicate=REPLICATES,
         ),
-        # Assessment tables
+
+        # ── Per-replicate assessment TSVs ────────────────────────────────────
         expand(
-            "results/assessment/{scenario}_assessment.tsv",
+            "results/assessment/{scenario}/{replicate}_assessment.tsv",
+            scenario=config["scenarios"],
+            replicate=REPLICATES,
+        ),
+
+        # ── Aggregated assessment TSV (one per scenario, all replicates) ─────
+        expand(
+            "results/assessment/{scenario}_all_replicates.tsv",
             scenario=config["scenarios"],
         ),
