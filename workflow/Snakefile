@@ -1,0 +1,50 @@
+"""
+Main Snakefile — orchestrates all sub-workflows.
+
+Sub-workflows are kept in workflow/rules/ and included here.
+Each section can also be run independently via --snakefile workflow/rules/<module>.smk
+after setting the config correctly.
+"""
+
+configfile: "config/config.yaml"
+
+include: "rules/mutate.smk"
+include: "rules/annotate.smk"
+include: "rules/simulate_reads.smk"
+include: "rules/blend_reads.smk"
+include: "rules/variant_calling.smk"
+include: "rules/assess.smk"
+
+
+# ---------------------------------------------------------------------------
+# Top-level target rule — request all final outputs
+# ---------------------------------------------------------------------------
+
+rule all:
+    input:
+        # Ground-truth mutation tables
+        expand(
+            "results/mutated/{ref_id}/{ref_id}.mutations.tsv",
+            ref_id=config["references"],
+        ),
+        # Transposable-element / repeat annotations
+        expand(
+            "results/annotation/{ref_id}/{ref_id}.challenging.tsv",
+            ref_id=config["references"],
+        ),
+        # Blended scenario FASTQ pairs
+        expand(
+            ["results/blended/{scenario}/{scenario}_R1.fastq.gz",
+             "results/blended/{scenario}/{scenario}_R2.fastq.gz"],
+            scenario=config["scenarios"],
+        ),
+        # breseq variant-call output directories
+        expand(
+            "results/breseq/{scenario}/output/output.vcf",
+            scenario=config["scenarios"],
+        ),
+        # Assessment tables
+        expand(
+            "results/assessment/{scenario}_assessment.tsv",
+            scenario=config["scenarios"],
+        ),

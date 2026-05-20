@@ -1,0 +1,181 @@
+# Snakemake Variant-Calling Benchmark Pipeline
+
+A modular Snakemake workflow for benchmarking variant callers on simulated
+metagenomic reads from mixed, mutated reference sequences.
+
+---
+
+## Overview
+
+```
+references (FASTA)
+       │
+       ├─► [mutate]          → mutated FASTA + ground-truth TSV
+       │
+       ├─► [annotate]        → repeat / TE annotation TSV  (MMseqs2)
+       │
+       ├─► [simulate_reads]  → simulated MiSeq reads (ART)
+       │       (unmutated & mutated versions of each reference)
+       │
+       ├─► [blend_reads]     → per-scenario blended FASTQ pairs
+       │       (user-defined abundances & mutated fractions)
+       │
+       ├─► [variant_calling] → breseq Genome Diff output
+       │
+       └─► [assess]          → per-mutation detection TSV
+```
+
+---
+
+## Quick start
+
+### 1. Install Snakemake
+
+```bash
+conda create -n snakemake -c conda-forge -c bioconda snakemake>=7
+conda activate snakemake
+```
+
+### 2. Configure your run
+
+Edit `config/config.yaml`:
+
+- Add your reference FASTA paths under `references`.
+- Point `annotation.mmseqs_databases` at your MMseqs2-formatted TE / IS databases.
+- Define blend scenarios under `scenarios`.
+- Optionally supply real MiSeq reads for empirical error-profile learning under
+  `simulation.empirical_reads_R1/R2`.
+
+### 3. Dry run
+
+```bash
+snakemake --snakefile workflow/Snakefile \
+          --configfile config/config.yaml \
+          --use-conda \
+          --cores 1 \
+          --dry-run
+```
+
+### 4. Run
+
+```bash
+snakemake --snakefile workflow/Snakefile \
+          --configfile config/config.yaml \
+          --use-conda \
+          --cores 16
+```
+
+On a cluster with SLURM:
+
+```bash
+snakemake --snakefile workflow/Snakefile \
+          --configfile config/config.yaml \
+          --use-conda \
+          --executor slurm \
+          --jobs 50 \
+          --default-resources slurm_partition=standard mem_mb=8000
+```
+
+---
+
+## Directory structure
+
+```
+snakemake_workflow/
+├── config/
+│   └── config.yaml             ← edit this
+├── resources/
+│   ├── references/             ← put reference FASTAs here
+│   └── databases/              ← put MMseqs2 DBs here
+├── workflow/
+│   ├── Snakefile               ← main entry point
+│   ├── envs/
+│   │   ├── art.yaml
+│   │   ├── breseq.yaml
+│   │   ├── mmseqs2.yaml
+│   │   ├── mutate.yaml
+│   │   └── python.yaml
+│   ├── rules/
+│   │   ├── annotate.smk
+│   │   ├── assess.smk
+│   │   ├── blend_reads.smk
+│   │   ├── mutate.smk
+│   │   ├── simulate_reads.smk
+│   │   └── variant_calling.smk
+│   └── scripts/
+│       ├── annotate_repeats.py
+│       ├── assess_variants.py
+│       ├── blend_reads.py
+│       ├── mmseqs_search.py
+│       └── mutate_reference.py
+└── results/                    ← created during the run
+    ├── annotation/
+    ├── assessment/
+    ├── blended/
+    ├── breseq/
+    ├── mutated/
+    └── simulated/
+```
+
+---
+
+## Modules
+
+### mutate
+
+Applies a user-specified substitution model to each reference.
+
+| Model | Config key | Notes |
+|-------|-----------|-------|
+| Jukes-Cantor | `jukes_cantor` | Equal rates among all substitution classes |
+| Tamura & Nei 1993 | `tamura_nei` | Separate Ti/Tv rates, unequal base frequencies |
+
+Key config keys: `mutation.model`, `mutation.substitution_rate`, `mutation.kappa`,
+`mutation.gc_freq`, `mutation.seed`.
+
+### annotate
+
+Runs MMseqs2 nucleotide searches against one or more TE/IS-element databases.
+Database paths are fully configurable in `config.yaml`.
+
+### simulate_reads
+
+Uses `art_illumina` to simulate paired-end MiSeq reads.  If real reads are
+supplied, ART's `art_profiler_illumina` is invoked first to build a custom
+quality-score profile.
+
+### blend_reads
+
+Combines simulated reads at scenario-defined abundances and mutated fractions.
+Uses reservoir sampling so memory use stays constant regardless of FASTQ size.
+
+### variant_calling
+
+Runs `breseq` in polymorphism-prediction mode against the unmutated references.
+Multiple references per scenario are passed as multiple `-r` flags.
+
+### assess
+
+Parses the breseq Genome Diff output and cross-references each expected
+mutation, recording detection status and quality scores.
+
+---
+
+## Outputs
+
+| Path | Description |
+|------|-------------|
+| `results/mutated/{ref_id}/{ref_id}.mutated.fasta` | Mutated reference sequence |
+| `results/mutated/{ref_id}/{ref_id}.mutations.tsv` | Ground-truth mutation table |
+| `results/annotation/{ref_id}/{ref_id}.repeats.tsv` | Repeat/TE annotation |
+| `results/simulated/{ref_id}/{mutated}/{ref_id}_R{1,2}.fastq.gz` | Simulated reads |
+| `results/blended/{scenario}/{scenario}_R{1,2}.fastq.gz` | Blended scenario reads |
+| `results/breseq/{scenario}/output/output.gd` | breseq Genome Diff |
+| `results/assessment/{scenario}_assessment.tsv` | Per-mutation assessment |
+
+The assessment TSV contains the following columns:
+
+```
+ref_id  seq_id  position  ref_base  alt_base  mutation_type
+detected  breseq_alt  breseq_freq  breseq_quality  above_threshold
+```

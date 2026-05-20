@@ -1,0 +1,7 @@
+name: snakemake_mmseqs2
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - mmseqs2>=15

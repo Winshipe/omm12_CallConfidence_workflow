@@ -1,0 +1,7 @@
+name: snakemake_breseq
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - breseq>=0.38
