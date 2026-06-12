@@ -1,0 +1,15 @@
+name: snakemake_bwa_gatk
+# Tools needed for the BWA + GATK variant-calling module.
+#
+# bwa       — short-read aligner (BWA-MEM algorithm)
+# gatk4     — variant calling with HaplotypeCaller, duplicate marking,
+#             sequence dictionary creation, and variant filtration
+# samtools  — BAM sorting, indexing, and format conversion
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - bwa>=0.7.17
+  - gatk4>=4.4
+  - samtools>=1.17

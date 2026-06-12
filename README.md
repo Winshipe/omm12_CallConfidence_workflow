@@ -135,29 +135,33 @@ Key config keys: `mutation.model`, `mutation.substitution_rate`, `mutation.kappa
 
 ### annotate
 
-Runs MMseqs2 nucleotide searches against one or more TE/IS-element databases.
-Database paths are fully configurable in `config.yaml`.
+This module uses mmseqs2 to search for hits in the databases provided by the user.
+I use the Phrog and TnCentral+ISfinder databases.  The databases for mmseqs need to be 
+downloaded from their respective websites and formatted but this is relatively simple using 
+mmseqs createdb command (described in the mmseqs2 user manual). This module also uses prodigal to 
+predict genes and then uses mmseqs2's clustering to group the genes by 90% ANI to identify
+close homologs.  This will then output a tsv (Tab Separated Values) with columns for chromosome, 
+start, stop and information about the "dangerous" region (ie is it a TE, IS, phage or duplicated).
 
 ### simulate_reads
 
 Uses `art_illumina` to simulate paired-end MiSeq reads.  If real reads are
-supplied, ART's `art_profiler_illumina` is invoked first to build a custom
-quality-score profile.
+supplied as fastqs with the paths placed in the config file, ART's `art_profiler_illumina` is invoked
+first to build a custom quality-score profile.
 
 ### blend_reads
 
-Combines simulated reads at scenario-defined abundances and mutated fractions.
-Uses reservoir sampling so memory use stays constant regardless of FASTQ size.
+Combines simulated reads according to differerent user specified relative abundances and minor allele fractions (called "scenarios", also in the config file).  The user can specify multiple scenarios to assess in the config file.
+
 
 ### variant_calling
 
-Runs `breseq` in polymorphism-prediction mode against the unmutated references.
-Multiple references per scenario are passed as multiple `-r` flags.
+Runs `breseq` in polymorphism-prediction mode against the unmutated references.  This pipeline is called multiple times (once for each replicate per scenario).  Multiple references per scenario are passed as multiple `-r` flags.  Note that step will fail if there are already files with the same names as the outputs (e.g. if you are making )
 
 ### assess
 
-Parses the breseq Genome Diff output and cross-references each expected
-mutation, recording detection status and quality scores.
+Parses the breseq VCF output and cross-references each expected
+mutation with the ground truth (the record of which mutations were generated), recording detection status and quality scores.
 
 ---
 
@@ -170,7 +174,7 @@ mutation, recording detection status and quality scores.
 | `results/annotation/{ref_id}/{ref_id}.repeats.tsv` | Repeat/TE annotation |
 | `results/simulated/{ref_id}/{mutated}/{ref_id}_R{1,2}.fastq.gz` | Simulated reads |
 | `results/blended/{scenario}/{scenario}_R{1,2}.fastq.gz` | Blended scenario reads |
-| `results/breseq/{scenario}/output/output.gd` | breseq Genome Diff |
+| `results/breseq/{scenario}/output/output.vcf` | breseq VCF |
 | `results/assessment/{scenario}_assessment.tsv` | Per-mutation assessment |
 
 The assessment TSV contains the following columns:

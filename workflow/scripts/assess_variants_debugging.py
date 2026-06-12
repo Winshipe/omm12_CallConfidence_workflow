@@ -98,7 +98,7 @@ if __name__ == "__main__":
     print("Ground truth TSVs:", args.ground_truth)
     print("Min quality:", args.min_quality)
     print("Log file:", args.log)
-snakemake = Snakemake(sys.argv[1],sys.argv[2],sys.argv[3],sys.argv[4],sys.argv[5])
+snakemake = Snakemake(args[],sys.argv[2],sys.argv[3],sys.argv[4],sys.argv[5])
 
 logging.basicConfig(
     filename=snakemake.log[0],

@@ -97,7 +97,7 @@ def write_fastq_records(records, fh):
 
 rng           = random.Random(snakemake.params.seed)
 scenario_cfg  = snakemake.params.scenario_cfg
-total_reads   = int(snakemake.params.total_reads)
+total_reads   = sum([count_fastq_records(path)*2 for path in snakemake.input])/2 #files are simulated at x coverage and half the files are mutated and half unmutated
 
 # Normalise abundances
 total_abundance = sum(c["abundance"] for c in scenario_cfg)

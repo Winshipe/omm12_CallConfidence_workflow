@@ -137,7 +137,7 @@ def mutate_sequence(seq, model, rate, kappa, gc_freq, rng):
                 "position": pos + 1,   # 1-based
                 "ref_base": ref_base,
                 "alt_base": alt_base,
-                "mutation_type": mut_type,
+                #"mutation_type": mut_type,
             }
         )
 
@@ -180,7 +180,7 @@ def main():
         for m in all_mutations:
             fh.write(
                 f"{m['seq_id']}\t{m['position']}\t{m['ref_base']}\t"
-                f"{m['alt_base']}\t{m['mutation_type']}\n"
+                f"{m['alt_base']}\n" #\t{m['mutation_type']}\n"
             )
     log.info(f"Wrote ground-truth TSV to {snakemake.output.mutations_tsv}")
     log.info("Done.")

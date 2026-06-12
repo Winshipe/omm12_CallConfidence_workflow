@@ -141,7 +141,7 @@ def load_ground_truth(tsv_path, ref_id):
                 "position":      int(row["position"]),
                 "ref_base":      row["ref_base"],
                 "alt_base":      row["alt_base"],
-                "mutation_type": row["mutation_type"],
+                #"mutation_type": row["mutation_type"],
             })
     log.info(f"Loaded {len(mutations)} expected mutations from {tsv_path}")
     return mutations
@@ -192,7 +192,7 @@ for m in expected_mutations:
         "position":        m["position"],
         "ref_base":        m["ref_base"],
         "alt_base":        m["alt_base"],
-        "mutation_type":   m["mutation_type"],
+        #"mutation_type":   m["mutation_type"],
         "detected":        detected,
         "vcf_alt":         vcf_alt,
         "vcf_freq":        vcf_freq,
@@ -210,7 +210,7 @@ log.info(
 )
 
 fieldnames = [
-    "ref_id", "seq_id", "position", "ref_base", "alt_base", "mutation_type",
+    "ref_id", "seq_id", "position", "ref_base", "alt_base", #"mutation_type",
     "detected", "vcf_alt", "vcf_freq", "vcf_quality", "above_threshold",
     "replicate",
 ]
