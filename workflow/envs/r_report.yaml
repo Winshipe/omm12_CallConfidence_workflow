@@ -1,0 +1,27 @@
+name: snakemake_r_report
+# ---------------------------------------------------------------------------
+# Conda environment for the genome QA/QC PDF report (report.smk).
+#
+# Core packages:
+#   r-base       — the R interpreter
+#   r-tidyverse  — ggplot2, dplyr, readr, tidyr, stringr, purrr …
+#   r-cowplot    — plot_grid() and get_legend() for compositing panels
+#   r-knitr      — kable() and knitr::knit() used inside R Markdown
+#   r-rmarkdown  — renders the .Rmd template to PDF
+#   r-kableextra — additional table formatting (kable_styling, booktabs)
+#   pandoc       — document conversion backend required by rmarkdown
+#   texlive-core — minimal LaTeX engine for PDF output
+# ---------------------------------------------------------------------------
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - r-base>=4.3
+  - r-tidyverse>=2.0
+  - r-cowplot>=1.1
+  - r-knitr>=1.45
+  - r-rmarkdown>=2.25
+  - r-kableextra>=1.3
+  - pandoc>=3.1
+  - texlive-core
