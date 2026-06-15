@@ -41,7 +41,7 @@ include: "rules/simulate_reads.smk"
 include: "rules/blend_reads.smk"
 include: "rules/variant_calling.smk"
 include: "rules/assess.smk"
-
+include: "rules/report.smk"
 
 # ---------------------------------------------------------------------------
 # Derive the list of replicate labels from config (e.g. ["rep1", "rep2", "rep3"])
@@ -79,9 +79,9 @@ rule all:
             replicate=REPLICATES,
         ),
 
-        # ── breseq variant calls (one per scenario × replicate) ─────────────
+        # ── variant calls (one per scenario × replicate) ─────────────
         expand(
-            "results/breseq/{scenario}/{replicate}/output/output.vcf",
+            "results/variant_calling/{scenario}/{replicate}/output.vcf",
             scenario=config["scenarios"],
             replicate=REPLICATES,
         ),
@@ -97,4 +97,13 @@ rule all:
         expand(
             "results/assessment/{scenario}_all_replicates.tsv",
             scenario=config["scenarios"],
+        ),
+        # ── 6. Per-reference PDF reports ──────────────────────────────────
+        # A self-contained PDF for each reference combining:
+        #   • Detection rate plot across genomic windows
+        #   • Annotation track (TEs, IS elements, homologous regions)
+        #   • Summary tables (per-scenario and per-mutation-type)
+        expand(
+            "results/reports/{ref_id}_report.pdf",
+            ref_id=config["references"],
         ),
