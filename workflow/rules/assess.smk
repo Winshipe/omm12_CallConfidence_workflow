@@ -1,12 +1,12 @@
 """
-rules/assess.smk — compare breseq calls to ground-truth mutations
+rules/assess.smk — compare variant_calling calls to ground-truth mutations
 ==================================================================
 
 This sub-workflow has two stages:
 
 Stage 1 — per-replicate assessment
 ------------------------------------
-For each (scenario × replicate), compare the breseq VCF output against the
+For each (scenario × replicate), compare the variant_calling VCF output against the
 ground-truth mutation TSVs for that specific replicate.  This produces one
 TSV per (scenario × replicate):
 
@@ -69,21 +69,21 @@ def scenario_ground_truth_tsvs(wildcards):
 
 rule assess_variants:
     """
-    Compare a single breseq VCF against the ground-truth mutation tables for
+    Compare a single variant_calling VCF against the ground-truth mutation tables for
     the same replicate.
 
     For each expected mutation (from the ground-truth TSV), the rule checks
-    whether breseq called a variant at that position and records:
+    whether variant_calling called a variant at that position and records:
       - whether it was detected at all
       - the called ALT allele
-      - the allele frequency reported by breseq
+      - the allele frequency reported by variant_calling
       - the QUAL score
       - whether the QUAL score meets the minimum threshold
 
     One output row is written per expected mutation.
     """
     input:
-        vcf          = "results/breseq/{scenario}/{replicate}/output/output.vcf",
+        vcf          = "results/variant_calling/{scenario}/{replicate}/output.vcf",
         ground_truth = scenario_ground_truth_tsvs,
     output:
         tsv="results/assessment/{scenario}/{replicate}_assessment.tsv",

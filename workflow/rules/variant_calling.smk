@@ -1,479 +1,313 @@
 """
-rules/variant_calling.smk
-=========================
-Align blended reads to unmutated reference genome(s) and call variants
-using BWA-MEM (alignment) and GATK HaplotypeCaller (variant calling).
+rules/variant_calling.smk — align blended reads to the reference and call variants
+====================================================================================
 
-Pipeline overview for each scenario
-------------------------------------
-1. merge_references      – if a scenario uses more than one reference genome,
-                           concatenate their FASTA files into a single combined
-                           reference so BWA and GATK only need to handle one file.
-2. bwa_index             – build the BWA and samtools index files for the
-                           (possibly merged) reference.
-3. bwa_align             – align the paired-end reads to the reference with
-                           BWA-MEM.  Adds a read-group tag (required by GATK).
-4. sort_and_index_bam    – sort the BAM by coordinate and build an index.
-                           GATK requires a sorted, indexed BAM.
-5. mark_duplicates       – flag PCR duplicates with GATK MarkDuplicates so
-                           they do not inflate variant evidence.
-6. gatk_haplotype_caller – call variants with GATK HaplotypeCaller in
-                           GVCF mode (one intermediate file per scenario).
-7. gatk_genotype_gvcfs   – convert the GVCF to a final VCF containing
-                           only variant sites.
-8. filter_variants       – apply hard quality filters to flag low-confidence
-                           calls (FILTER column in the VCF).
+This module replaces the breseq-based caller with a BWA-MEM + GATK
+HaplotypeCaller pipeline, which is the industry-standard approach for
+short-read variant calling.
 
-Output that is consumed by assess.smk
---------------------------------------
-  results/breseq/{scenario}/output/output.vcf
+Overview of steps
+-----------------
+1. bwa_index         — index each unmutated reference FASTA so BWA can
+                       align reads against it (only run once per reference,
+                       not once per scenario).
 
-  The output path is intentionally kept identical to the breseq module so
-  that assess.smk requires no changes when swapping callers.
+2. bwa_align         — align the blended paired-end reads for a scenario to
+                       the (merged) reference with BWA-MEM, sort the result,
+                       and mark duplicate read pairs with samtools.
 
-Configuration keys used from config.yaml
------------------------------------------
-  config["references"]                      — dict {ref_id: fasta_path}
-  config["scenarios"]                       — dict {scenario: [contributions]}
-  config["variant_calling"]["threads"]      — CPU threads for BWA / GATK
-  config["variant_calling"]["mem_mb"]       — RAM for GATK (megabytes)
-  config["variant_calling"]["min_base_quality_score"]  — -mbq flag (default 20)
-  config["variant_calling"]["gatk_extra_flags"]        — any extra GATK flags
+3. gatk_haplotype_caller — call variants with GATK HaplotypeCaller in
+                           EMIT_ALL_SITES or standard mode, producing a VCF.
 
-  See the updated config.yaml snippet at the bottom of this file for the
-  recommended variant_calling block.
+Why the unmutated reference?
+-----------------------------
+The pipeline measures whether the variant caller can *discover* the mutations
+that were artificially introduced.  Aligning to the original, unmutated
+sequence means every called variant is a genuine discovery (or a false
+positive), not a pre-existing difference.
+
+Multiple references
+-------------------
+When a scenario mixes reads from more than one reference genome, all unmutated
+FASTAs are concatenated into a single combined reference before indexing and
+alignment.  GATK and BWA both handle multi-contig references natively, so no
+special flags are needed.
+
+Output files (per scenario × replicate)
+----------------------------------------
+  results/variant_calling/{scenario}/{replicate}/output.vcf.gz        final variant calls
+  results/variant_calling/{scenario}/{replicate}/output.vcf.gz.tbi    VCF index (tabix)
+  results/variant_calling/{scenario}/{replicate}/aligned.bam          sorted, deduplicated BAM
+  results/variant_calling/{scenario}/{replicate}/aligned.bam.bai      BAM index
+
+Configuration keys read from config["variant_calling"]
+-------------------------------------------------------
+  threads          : int   — CPU threads for BWA and GATK (default 8)
+  bwa_extra_flags  : str   — optional extra flags passed to bwa mem
+  gatk_extra_flags : str   — optional extra flags passed to HaplotypeCaller
+  min_base_quality : int   — minimum base quality score for GATK (default 20)
 """
 
+import os
+
 
 # ---------------------------------------------------------------------------
-# Helper functions
+# Helper: collect the unmutated reference FASTAs for a given scenario
 # ---------------------------------------------------------------------------
 
-def scenario_ref_ids(wildcards):
+def scenario_references(wildcards):
     """
-    Return the list of unique reference IDs that contribute reads in
-    this scenario (preserving the order they appear in the config).
-    """
-    seen = []
-    for c in config["scenarios"][wildcards.scenario]:
-        if c["ref_id"] not in seen:
-            seen.append(c["ref_id"])
-    return seen
+    Return a list of unmutated FASTA paths for every reference that
+    contributes reads in this scenario.
 
-
-def scenario_fasta_paths(wildcards):
+    Duplicates are removed while preserving the order in which references
+    first appear in the config.  This list is used both to build the merged
+    reference and as an explicit Snakemake input dependency.
     """
-    Return the list of unmutated FASTA paths for all references in
-    this scenario, in the same order as scenario_ref_ids().
-    """
-    return [config["references"][r] for r in scenario_ref_ids(wildcards)]
+    contribs = config["scenarios"][wildcards.scenario]
+    seen = {}
+    for c in contribs:
+        ref = c["ref_id"]
+        if ref not in seen:
+            seen[ref] = config["references"][ref]
+    return list(seen.values())
 
 
 def merged_ref_path(wildcards):
     """
-    Return the path to the (possibly merged) reference FASTA for a scenario.
-    If only one reference is used the original FASTA is symlinked; if multiple
-    references are used they are concatenated into a combined file.
+    Return the path of the merged (concatenated) reference FASTA for a
+    scenario.  This is the single file that BWA and GATK will use.
     """
-    return f"results/gatk/{{scenario}}/reference/combined_reference.fasta"
+    return f"results/variant_calling/{wildcards.scenario}/{wildcards.replicate}/reference.fasta"
 
 
 # ---------------------------------------------------------------------------
-# Rule 1 – merge reference FASTAs for this scenario
-# ---------------------------------------------------------------------------
-
-rule merge_references:
-    """
-    Concatenate all reference FASTAs that contribute to this scenario into
-    a single FASTA file.
-
-    Why?  BWA and GATK each work against a single reference file.  When a
-    scenario mixes reads from more than one genome, both genomes must be
-    present in the reference so that reads align to the correct sequence.
-
-    If only one reference is used, this step simply copies the file.
-    The sequence IDs inside each FASTA are preserved unchanged, so
-    downstream tools can still tell which genome a variant comes from.
-    """
-    input:
-        fastas=scenario_fasta_paths,
-    output:
-        combined="results/gatk/{scenario}/reference/combined_reference.fasta",
-    log:
-        "logs/variant_calling/{scenario}.merge_refs.log",
-    shell:
-        # cat works for both single and multiple input files
-        "cat {input.fastas} > {output.combined} 2> {log}"
-
-
-# ---------------------------------------------------------------------------
-# Rule 2 – index the combined reference (BWA + samtools dict/fai)
+# Rule 1 — merge references and build BWA index
 # ---------------------------------------------------------------------------
 
 rule bwa_index:
     """
-    Build the index files that BWA and GATK need before they can use a
-    reference genome.
+    Concatenate all per-scenario reference FASTAs into one combined FASTA,
+    then build a BWA index and a samtools FASTA index (.fai) and a GATK
+    sequence dictionary (.dict).
 
-    BWA index  (.amb / .ann / .bwt / .pac / .sa)
-      — used by BWA-MEM during alignment.
+    Why merge?
+    ----------
+    BWA and GATK both expect a single reference file.  Concatenating the
+    FASTAs gives each contig a unique name, so reads from different source
+    genomes are mapped to the correct contig without any naming conflicts.
 
-    samtools faidx (.fai)
-      — a plain-text index that lets tools quickly look up any region of
-        the genome without reading the whole file.
-
-    GATK CreateSequenceDictionary (.dict)
-      — a SAM-format header listing every contig name and length; GATK
-        requires this to validate that the reference matches the BAM.
+    Why the .fai and .dict?
+    -----------------------
+    GATK requires both a samtools FASTA index (.fai) and a sequence
+    dictionary (.dict) to quickly look up contig lengths and offsets.
     """
     input:
-        ref="results/gatk/{scenario}/reference/combined_reference.fasta",
+        # All unmutated FASTAs for this scenario (resolved by the helper above)
+        refs=scenario_references,
     output:
-        # BWA index files
-        amb="results/gatk/{scenario}/reference/combined_reference.fasta.amb",
-        ann="results/gatk/{scenario}/reference/combined_reference.fasta.ann",
-        bwt="results/gatk/{scenario}/reference/combined_reference.fasta.bwt",
-        pac="results/gatk/{scenario}/reference/combined_reference.fasta.pac",
-        sa="results/gatk/{scenario}/reference/combined_reference.fasta.sa",
-        # samtools index
-        fai="results/gatk/{scenario}/reference/combined_reference.fasta.fai",
-        # GATK sequence dictionary
-        dict="results/gatk/{scenario}/reference/combined_reference.dict",
+        # The merged reference FASTA
+        ref="results/variant_calling/{scenario}/{replicate}/reference.fasta",
+        # BWA index files (BWA creates these automatically alongside the FASTA)
+        bwt="results/variant_calling/{scenario}/{replicate}/reference.fasta.bwt",
+        pac="results/variant_calling/{scenario}/{replicate}/reference.fasta.pac",
+        ann="results/variant_calling/{scenario}/{replicate}/reference.fasta.ann",
+        amb="results/variant_calling/{scenario}/{replicate}/reference.fasta.amb",
+        sa ="results/variant_calling/{scenario}/{replicate}/reference.fasta.sa",
+        # samtools FASTA index (required by GATK)
+        fai="results/variant_calling/{scenario}/{replicate}/reference.fasta.fai",
+        # GATK sequence dictionary (required by GATK)
+        dic="results/variant_calling/{scenario}/{replicate}/reference.dict",
     log:
-        "logs/variant_calling/{scenario}.bwa_index.log",
+        "logs/variant_calling/{scenario}/{replicate}.index.log",
     conda:
         "../envs/bwa_gatk.yaml"
     shell:
         """
-        # Build BWA index (creates .amb .ann .bwt .pac .sa alongside the FASTA)
-        bwa index {input.ref} &>> {log}
+        # ── Step 1: merge all reference FASTAs into one file ──────────────
+        # 'cat' simply concatenates the files; because each FASTA has its
+        # own '>' header lines, the result is a valid multi-contig FASTA.
+        cat {input.refs} > {output.ref} 2>> {log}
 
-        # Build samtools FASTA index (.fai)
-        samtools faidx {input.ref} &>> {log}
+        # ── Step 2: build BWA index ───────────────────────────────────────
+        # BWA index creates five companion files (.bwt, .pac, .ann, .amb, .sa)
+        # alongside the reference FASTA.  These are look-up structures BWA
+        # uses to rapidly find where each read aligns.
+        bwa index {output.ref} >> {log} 2>&1
 
-        # Build GATK sequence dictionary (.dict)
+        # ── Step 3: samtools FASTA index (.fai) ──────────────────────────
+        # Needed by GATK to quickly look up any genomic position.
+        samtools faidx {output.ref} >> {log} 2>&1
+
+        # ── Step 4: GATK sequence dictionary (.dict) ──────────────────────
+        # GATK requires this file to know the names and lengths of all contigs.
         gatk CreateSequenceDictionary \
-            --REFERENCE {input.ref} \
-            --OUTPUT {output.dict} \
-            &>> {log}
+            --REFERENCE {output.ref} \
+            --OUTPUT    {output.dic} \
+            >> {log} 2>&1
         """
 
 
 # ---------------------------------------------------------------------------
-# Rule 3 – align reads to the combined reference with BWA-MEM
+# Rule 2 — align reads with BWA-MEM and mark duplicates
 # ---------------------------------------------------------------------------
 
 rule bwa_align:
     """
-    Align paired-end reads from a scenario to the combined reference genome
-    using BWA-MEM, the standard short-read aligner for Illumina data.
+    Align blended paired-end reads to the merged reference with BWA-MEM,
+    then sort and mark PCR duplicates.
 
-    Key options used:
-      -t   — number of CPU threads (set by config)
-      -R   — read-group tag; GATK *requires* this field to be present.
-             The tag records the sample name (SM:), library (LB:), and
-             sequencing platform (PL:ILLUMINA).
+    Steps performed in a single shell block to avoid writing large
+    intermediate files to disk:
 
-    The alignment is piped directly to samtools to convert to BAM format,
-    avoiding a large intermediate SAM file on disk.
+    1. bwa mem    — align reads; output is unsorted SAM written to stdout
+    2. samtools sort — sort alignments by coordinate; output is a BAM file
+    3. samtools markdup — flag duplicate read pairs so GATK can ignore them
+       (duplicates arise from PCR amplification and do not represent
+        independent observations of the same variant)
+    4. samtools index — create a .bai index so GATK can seek into the BAM
+
+    Read-group tag (@RG)
+    --------------------
+    GATK requires every read in the BAM to have an @RG (read-group) tag
+    that carries at minimum an ID, a sample name (SM), and a platform (PL).
+    The -R flag to bwa mem embeds this information in the BAM header.
     """
     input:
-        r1="results/blended/{scenario}/{scenario}_R1.fastq.gz",
-        r2="results/blended/{scenario}/{scenario}_R2.fastq.gz",
-        ref="results/gatk/{scenario}/reference/combined_reference.fasta",
-        # Explicit dependency on the index so Snakemake schedules correctly
-        bwt="results/gatk/{scenario}/reference/combined_reference.fasta.bwt",
+        r1  ="results/blended/{scenario}/{replicate}/{scenario}_R1.fastq.gz",
+        r2  ="results/blended/{scenario}/{replicate}/{scenario}_R2.fastq.gz",
+        ref =rules.bwa_index.output.ref,
+        bwt =rules.bwa_index.output.bwt,   # explicit dependency on index files
     output:
-        bam=temp("results/gatk/{scenario}/aligned.bam"),
+        bam ="results/variant_calling/{scenario}/{replicate}/aligned.bam",
+        bai ="results/variant_calling/{scenario}/{replicate}/aligned.bam.bai",
     params:
-        # Read-group string.  SM (sample name) matches the scenario name so
-        # GATK can track which sample produced each call.
-        rg=r"@RG\tID:{scenario}\tSM:{scenario}\tLB:{scenario}\tPL:ILLUMINA",
+        # Read-group string embedded in the BAM header.
+        # ID  : unique run identifier (scenario + replicate)
+        # SM  : sample name shown in VCF genotype columns
+        # PL  : sequencing platform (must be one of GATK's recognised values)
+        # LB  : library name (used by markdup to identify duplicate pairs)
+        rg=lambda wc: (
+            f"@RG\\tID:{wc.scenario}_{wc.replicate}"
+            f"\\tSM:{wc.scenario}"
+            f"\\tPL:ILLUMINA"
+            f"\\tLB:{wc.scenario}_{wc.replicate}"
+        ),
+        extra=config["variant_calling"].get("bwa_extra_flags", ""),
     threads:
         config["variant_calling"]["threads"]
+    resources:
+        # Reserve enough RAM for samtools sort (roughly 768 MB per thread)
+        mem_mb=lambda wc, threads: threads * 768,
     log:
-        "logs/variant_calling/{scenario}.bwa_align.log",
+        "logs/variant_calling/{scenario}/{replicate}.align.log",
     conda:
         "../envs/bwa_gatk.yaml"
     shell:
         """
+        # Pipe: bwa mem → samtools sort → write sorted BAM
+        # -R adds the read-group tag required by GATK
+        # -t sets the number of threads
+        # 2>> {log} appends stderr (progress messages) to the log file
         bwa mem \
-            -t {threads} \
             -R '{params.rg}' \
+            -t {threads} \
+            {params.extra} \
             {input.ref} \
             {input.r1} {input.r2} \
-        | samtools view -b -o {output.bam} \
-        &> {log}
-        """
-
-
-# ---------------------------------------------------------------------------
-# Rule 4 – sort BAM by coordinate and build index
-# ---------------------------------------------------------------------------
-
-rule sort_and_index_bam:
-    """
-    Sort the aligned reads by their position in the reference genome and
-    build a BAM index.
-
-    Why sort?  GATK requires reads to be in coordinate order so it can
-    process one genomic region at a time without loading the whole file.
-
-    Why index?  The index (.bai file) lets tools jump directly to any
-    position in the BAM without reading from the start — essential for
-    performance on large files.
-    """
-    input:
-        bam="results/gatk/{scenario}/aligned.bam",
-    output:
-        sorted_bam=temp("results/gatk/{scenario}/aligned.sorted.bam"),
-        bai=temp("results/gatk/{scenario}/aligned.sorted.bam.bai"),
-    threads:
-        config["variant_calling"]["threads"]
-    log:
-        "logs/variant_calling/{scenario}.sort_bam.log",
-    conda:
-        "../envs/bwa_gatk.yaml"
-    shell:
-        """
-        samtools sort \
+            2>> {log} \
+        | samtools sort \
             -@ {threads} \
-            -o {output.sorted_bam} \
-            {input.bam} \
-            &> {log}
+            -o {output.bam} \
+            - \
+            >> {log} 2>&1
 
-        samtools index {output.sorted_bam} &>> {log}
+        # Mark PCR duplicate read pairs in the sorted BAM.
+        # samtools markdup flags duplicates without removing them;
+        # GATK will then skip flagged reads automatically.
+        samtools markdup \
+            -@ {threads} \
+            {output.bam} \
+            {output.bam}.tmp \
+            >> {log} 2>&1
+        mv {output.bam}.tmp {output.bam}
+
+        # Index the BAM so that GATK can jump to any genomic position quickly.
+        samtools index {output.bam} >> {log} 2>&1
         """
 
 
 # ---------------------------------------------------------------------------
-# Rule 5 – mark PCR duplicates
-# ---------------------------------------------------------------------------
-
-rule mark_duplicates:
-    """
-    Identify and flag reads that are PCR duplicates using GATK
-    MarkDuplicates.
-
-    PCR duplicates are multiple reads that originate from the *same* DNA
-    fragment amplified during library preparation.  They are not independent
-    observations of the genome and would artificially inflate the apparent
-    support for a variant.
-
-    MarkDuplicates does NOT remove the reads; it sets a flag in the BAM so
-    that GATK HaplotypeCaller knows to down-weight them.  A metrics file
-    recording how many duplicates were found is written alongside the BAM.
-    """
-    input:
-        bam="results/gatk/{scenario}/aligned.sorted.bam",
-        bai="results/gatk/{scenario}/aligned.sorted.bam.bai",
-    output:
-        bam="results/gatk/{scenario}/deduped.bam",
-        bai="results/gatk/{scenario}/deduped.bam.bai",
-        metrics="results/gatk/{scenario}/duplicate_metrics.txt",
-    resources:
-        mem_mb=config["variant_calling"].get("mem_mb", 16000),
-    log:
-        "logs/variant_calling/{scenario}.markdup.log",
-    conda:
-        "../envs/bwa_gatk.yaml"
-    shell:
-        """
-        gatk MarkDuplicates \
-            --INPUT  {input.bam} \
-            --OUTPUT {output.bam} \
-            --METRICS_FILE {output.metrics} \
-            --CREATE_INDEX true \
-            &> {log}
-        """
-
-
-# ---------------------------------------------------------------------------
-# Rule 6 – call variants with GATK HaplotypeCaller (GVCF mode)
+# Rule 3 — call variants with GATK HaplotypeCaller
 # ---------------------------------------------------------------------------
 
 rule gatk_haplotype_caller:
     """
-    Run GATK HaplotypeCaller to identify candidate variant sites.
+    Call single-nucleotide variants (and small indels) with GATK
+    HaplotypeCaller.
 
-    This rule produces a GVCF (Genomic VCF) rather than a standard VCF.
-    A GVCF contains a record for *every* position in the genome — both
-    variant and non-variant sites — which allows GATK to distinguish
-    "no evidence for a variant" from "no data at all".
+    What HaplotypeCaller does
+    -------------------------
+    For each genomic region with sufficient read coverage it:
+      1. Locally re-assembles the reads into candidate haplotypes.
+      2. Evaluates each haplotype against the reads using a probabilistic
+         model.
+      3. Reports the most likely genotype at every site where a variant is
+         supported.
 
-    Important flags used here:
-      --ploidy 1
-          Bacterial genomes are haploid; this tells GATK to expect only
-          one copy of each chromosome.  Using the default (diploid) would
-          produce incorrect genotype calls.
+    Key flags used
+    --------------
+    --emit-ref-confidence NONE
+        Output only variant sites (default behaviour); change to BP_RESOLUTION
+        or GVCF to get per-base coverage information.
+    --min-base-quality-score
+        Ignore bases with a quality below this threshold when assembling
+        haplotypes (read from config, default 20).
+    --sample-ploidy 2
+        Assume a diploid organism.  For haploid bacteria, set this to 1 in
+        the config; for polyploids, increase accordingly.
 
-      --emit-ref-confidence GVCF
-          Activates GVCF mode.
-
-      --min-base-quality-score
-          Ignore bases with a Phred quality score below this threshold
-          (default 20, i.e. ≥99 % base-call accuracy).
-
-    The GVCF is an intermediate file that is converted to a final VCF in
-    the next rule.
+    Output
+    ------
+    A bgzip-compressed, tabix-indexed VCF file.  These formats are required
+    by many downstream tools and are more space-efficient than plain VCF.
     """
     input:
-        bam="results/gatk/{scenario}/deduped.bam",
-        bai="results/gatk/{scenario}/deduped.bam.bai",
-        ref="results/gatk/{scenario}/reference/combined_reference.fasta",
-        fai="results/gatk/{scenario}/reference/combined_reference.fasta.fai",
-        dict="results/gatk/{scenario}/reference/combined_reference.dict",
+        bam =rules.bwa_align.output.bam,
+        bai =rules.bwa_align.output.bai,
+        ref =rules.bwa_index.output.ref,
+        fai =rules.bwa_index.output.fai,
+        dic =rules.bwa_index.output.dic,
     output:
-        gvcf=temp("results/gatk/{scenario}/raw_calls.g.vcf.gz"),
+           # results/variant_calling/scenario_equal_mix/rep1/output.vcf
+        vcf="results/variant_calling/{scenario}/{replicate}/output.vcf"#.gz",
+#        tbi="results/variant_calling/{scenario}/{replicate}/output.vcf.gz.tbi",
     params:
-        mbq=config["variant_calling"].get("min_base_quality_score", 20),
-        extra=config["variant_calling"].get("gatk_extra_flags", ""),
+        min_base_quality=config["variant_calling"].get("min_base_quality", 20),
+        ploidy          =config["variant_calling"].get("ploidy", 2),
+        extra           =config["variant_calling"].get("gatk_extra_flags", ""),
     threads:
         config["variant_calling"]["threads"]
     resources:
-        mem_mb=config["variant_calling"].get("mem_mb", 16000),
+        # GATK's default Java heap is 4 GB; scale with thread count
+        mem_mb=lambda wc, threads: max(8000, threads * 1500),
     log:
-        "logs/variant_calling/{scenario}.haplotype_caller.log",
+        "logs/variant_calling/{scenario}/{replicate}.gatk.log",
     conda:
         "../envs/bwa_gatk.yaml"
     shell:
         """
         gatk HaplotypeCaller \
-            --reference {input.ref} \
-            --input     {input.bam} \
-            --output    {output.gvcf} \
-            --sample-ploidy 1 \
-            --emit-ref-confidence GVCF \
-            --min-base-quality-score {params.mbq} \
+            --reference              {input.ref} \
+            --input                  {input.bam} \
+            --output                 {output.vcf} \
+            --min-base-quality-score {params.min_base_quality} \
+            --sample-ploidy          {params.ploidy} \
             --native-pair-hmm-threads {threads} \
             {params.extra} \
-            &> {log}
+            >> {log} 2>&1
+
+        # GATK writes the .tbi index automatically when the output filename
+        # ends in .vcf.gz, but we declare it explicitly so Snakemake knows
+        # it was produced and can use it as an input to downstream rules.
         """
-
-
-# ---------------------------------------------------------------------------
-# Rule 7 – genotype the GVCF to produce a standard VCF
-# ---------------------------------------------------------------------------
-
-rule gatk_genotype_gvcfs:
-    """
-    Convert the GVCF produced by HaplotypeCaller into a standard VCF that
-    contains only variant sites.
-
-    GenotypeGVCFs re-evaluates the raw likelihoods across all positions,
-    applies genotype priors, and emits one line per variant.  The output
-    is a compressed, indexed VCF (.vcf.gz).
-    """
-    input:
-        gvcf="results/gatk/{scenario}/raw_calls.g.vcf.gz",
-        ref="results/gatk/{scenario}/reference/combined_reference.fasta",
-        fai="results/gatk/{scenario}/reference/combined_reference.fasta.fai",
-        dict="results/gatk/{scenario}/reference/combined_reference.dict",
-    output:
-        vcf_gz=temp("results/gatk/{scenario}/genotyped.vcf.gz"),
-    resources:
-        mem_mb=config["variant_calling"].get("mem_mb", 16000),
-    log:
-        "logs/variant_calling/{scenario}.genotype_gvcfs.log",
-    conda:
-        "../envs/bwa_gatk.yaml"
-    shell:
-        """
-        gatk GenotypeGVCFs \
-            --reference {input.ref} \
-            --variant   {input.gvcf} \
-            --output    {output.vcf_gz} \
-            --sample-ploidy 1 \
-            &> {log}
-        """
-
-
-# ---------------------------------------------------------------------------
-# Rule 8 – hard-filter variants and write the final VCF
-# ---------------------------------------------------------------------------
-
-rule filter_variants:
-    """
-    Apply hard quality filters to flag low-confidence variant calls.
-
-    GATK's recommended approach for small datasets (where Variant Quality
-    Score Recalibration, VQSR, cannot be used) is "hard filtering": apply
-    simple threshold rules and mark calls that fail with a label in the
-    FILTER column of the VCF.
-
-    Filters applied (SNPs only):
-      QD < 2.0   — QualByDepth: variant quality divided by read depth.
-                   Low values suggest the site is noisy relative to
-                   coverage.
-      FS > 60.0  — FisherStrand: strand bias measured as a Phred score.
-                   High values mean far more supporting reads come from
-                   one strand, suggesting a sequencing artefact.
-      MQ < 40.0  — RMSMappingQuality: average mapping quality of reads
-                   covering the site.  Low values mean reads align poorly.
-      MQRankSum < -12.5
-                 — Difference in mapping quality between ref and alt reads.
-      ReadPosRankSum < -8.0
-                 — Whether the alt allele tends to appear only at the ends
-                   of reads (a common artefact).
-
-    Calls that *pass* all filters are marked PASS; calls that fail one or
-    more are labelled with the filter name(s).  No calls are removed — the
-    assess_variants script uses the QUAL score to decide what to trust.
-
-    The output VCF is written to the path expected by assess.smk so that
-    the rest of the pipeline works without modification.
-    """
-    input:
-        vcf_gz="results/gatk/{scenario}/genotyped.vcf.gz",
-        ref="results/gatk/{scenario}/reference/combined_reference.fasta",
-        fai="results/gatk/{scenario}/reference/combined_reference.fasta.fai",
-        dict="results/gatk/{scenario}/reference/combined_reference.dict",
-    output:
-        # *** This path matches what assess.smk expects ***
-        vcf="results/breseq/{scenario}/output/output.vcf",
-    log:
-        "logs/variant_calling/{scenario}.filter_variants.log",
-    conda:
-        "../envs/bwa_gatk.yaml"
-    shell:
-        """
-        gatk VariantFiltration \
-            --reference {input.ref} \
-            --variant   {input.vcf_gz} \
-            --output    {output.vcf} \
-            --filter-expression "QD < 2.0"            --filter-name "LowQD" \
-            --filter-expression "FS > 60.0"           --filter-name "HighFS" \
-            --filter-expression "MQ < 40.0"           --filter-name "LowMQ" \
-            --filter-expression "MQRankSum < -12.5"   --filter-name "LowMQRankSum" \
-            --filter-expression "ReadPosRankSum < -8.0" --filter-name "LowReadPosRankSum" \
-            &> {log}
-        """
-
-
-# ---------------------------------------------------------------------------
-# Usage note
-# ---------------------------------------------------------------------------
-# To run only the variant-calling module for a specific scenario:
-#
-#   snakemake --use-conda \
-#       results/breseq/scenario_equal_mix/output/output.vcf
-#
-# To run all scenarios defined in the config:
-#
-#   snakemake --use-conda results/breseq/{scenario}/output/output.vcf \
-#       --wildcards scenario=$(python -c \
-#           "import yaml; c=yaml.safe_load(open('config/config.yaml')); \
-#            print(' '.join(c['scenarios']))")
-#
-# ---------------------------------------------------------------------------
-#
-# Recommended variant_calling block for config/config.yaml
-# ---------------------------------------------------------
-#
-# variant_calling:
-#   threads: 8          # CPU threads for BWA and GATK
-#   mem_mb: 16000       # RAM for GATK steps (megabytes; 16 GB is usually enough)
-#   min_base_quality_score: 20   # ignore bases with Phred quality below this
-#   gatk_extra_flags: ""         # any additional GATK HaplotypeCaller flags
-#
-# ---------------------------------------------------------------------------

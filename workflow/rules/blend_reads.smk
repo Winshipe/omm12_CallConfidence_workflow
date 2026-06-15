@@ -81,7 +81,7 @@ rule blend_reads:
         r2="results/blended/{scenario}/{replicate}/{scenario}_R2.fastq.gz",
     params:
         scenario_cfg = lambda wc: config["scenarios"][wc.scenario],
-        total_reads  = config["blend_total_reads"],
+        #total_reads  = config["blend_total_reads"],
         seed         = replicate_seed,
     log:
         "logs/blend/{scenario}/{replicate}.log",
