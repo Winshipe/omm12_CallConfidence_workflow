@@ -181,6 +181,9 @@ rule bwa_align:
     output:
         bam ="results/variant_calling/{scenario}/{replicate}/aligned.bam",
         bai ="results/variant_calling/{scenario}/{replicate}/aligned.bam.bai",
+        nc = temp("results/variant_calling/{scenario}/{replicate}/namecollate.bam.tmp"),
+        fm = temp("results/variant_calling/{scenario}/{replicate}/fixmate.bam.tmp"),
+        sorted = temp("results/variant_calling/{scenario}/{replicate}/sorted.bam.tmp"),
     params:
         # Read-group string embedded in the BAM header.
         # ID  : unique run identifier (scenario + replicate)
@@ -212,22 +215,21 @@ rule bwa_align:
         bwa mem \
             -R '{params.rg}' \
             -t {threads} \
+            -o {output.bam} \
             {params.extra} \
             {input.ref} \
             {input.r1} {input.r2} \
             2>> {log} \
-        | samtools sort \
-            -@ {threads} \
-            -o {output.bam} \
-            - \
-            >> {log} 2>&1
-
+            2>&1
+        samtools collate -o {output.nc} {output.bam} >> {log} 2>&1
+        samtools fixmate -m {output.nc} {output.fm} >> {log} 2>&1
+        samtools sort -@ {threads} -o {output.sorted} {output.fm} >> {log} 2>&1
         # Mark PCR duplicate read pairs in the sorted BAM.
         # samtools markdup flags duplicates without removing them;
         # GATK will then skip flagged reads automatically.
         samtools markdup \
             -@ {threads} \
-            {output.bam} \
+            {output.sorted} \
             {output.bam}.tmp \
             >> {log} 2>&1
         mv {output.bam}.tmp {output.bam}

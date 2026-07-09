@@ -1,4 +1,4 @@
-# Snakemake Variant-Calling Benchmark Pipeline
+# CallConfidence - Variant-Calling Benchmarking Pipeline
 
 A modular Snakemake workflow for benchmarking variant callers on simulated
 metagenomic reads from mixed, mutated reference sequences.
@@ -20,7 +20,7 @@ references (FASTA)
        ├─► [blend_reads]     → per-scenario blended FASTQ pairs
        │       (user-defined abundances & mutated fractions)
        │
-       ├─► [variant_calling] → breseq Genome Diff output
+       ├─► [variant_calling] → VCF file
        │
        └─► [assess]          → per-mutation detection TSV
 ```
@@ -35,6 +35,8 @@ references (FASTA)
 conda create -n snakemake -c conda-forge -c bioconda snakemake>=7
 conda activate snakemake
 ```
+
+If you're running snakemake on a cluster with a scheduler, you will likely need to add an executor plugin to allow snakemake to talk to the cluster's scheduler.  https://snakemake.github.io/snakemake-plugin-catalog/index.html  If you're unsure which to add, talk to your cluster's support staff
 
 ### 2. Configure your run
 
@@ -91,7 +93,7 @@ snakemake_workflow/
 │   ├── Snakefile               ← main entry point
 │   ├── envs/
 │   │   ├── art.yaml
-│   │   ├── breseq.yaml
+│   │   ├── variant_calling.yaml
 │   │   ├── mmseqs2.yaml
 │   │   ├── mutate.yaml
 │   │   └── python.yaml
@@ -112,7 +114,7 @@ snakemake_workflow/
     ├── annotation/
     ├── assessment/
     ├── blended/
-    ├── breseq/
+    ├── variant_calling/
     ├── mutated/
     └── simulated/
 ```
@@ -138,7 +140,7 @@ Key config keys: `mutation.model`, `mutation.substitution_rate`, `mutation.kappa
 This module uses mmseqs2 to search for hits in the databases provided by the user.
 I use the Phrog and TnCentral+ISfinder databases.  The databases for mmseqs need to be 
 downloaded from their respective websites and formatted but this is relatively simple using 
-mmseqs createdb command (described in the mmseqs2 user manual). This module also uses prodigal to 
+mmseqs createdb command (`mmseqs2 createdb sequences.fasta dbname`; described in the mmseqs2 user manual). This module also uses prodigal to 
 predict genes and then uses mmseqs2's clustering to group the genes by 90% ANI to identify
 close homologs.  This will then output a tsv (Tab Separated Values) with columns for chromosome, 
 start, stop and information about the "dangerous" region (ie is it a TE, IS, phage or duplicated).
@@ -156,11 +158,11 @@ Combines simulated reads according to differerent user specified relative abunda
 
 ### variant_calling
 
-Runs `breseq` in polymorphism-prediction mode against the unmutated references.  This pipeline is called multiple times (once for each replicate per scenario).  Multiple references per scenario are passed as multiple `-r` flags.  Note that step will fail if there are already files with the same names as the outputs (e.g. if you are making )
+Maps the output from blend_reads to the reference genome(s) using BWA and then calls variants with GATK HaplotypeCaller 
 
 ### assess
 
-Parses the breseq VCF output and cross-references each expected
+Parses the VCF output and cross-references each expected
 mutation with the ground truth (the record of which mutations were generated), recording detection status and quality scores.
 
 ---
@@ -174,12 +176,12 @@ mutation with the ground truth (the record of which mutations were generated), r
 | `results/annotation/{ref_id}/{ref_id}.repeats.tsv` | Repeat/TE annotation |
 | `results/simulated/{ref_id}/{mutated}/{ref_id}_R{1,2}.fastq.gz` | Simulated reads |
 | `results/blended/{scenario}/{scenario}_R{1,2}.fastq.gz` | Blended scenario reads |
-| `results/breseq/{scenario}/output/output.vcf` | breseq VCF |
+| `results/variant_calling/{scenario}/output/output.vcf` | Output from variant caller (GATK) |
 | `results/assessment/{scenario}_assessment.tsv` | Per-mutation assessment |
 
 The assessment TSV contains the following columns:
 
 ```
 ref_id  seq_id  position  ref_base  alt_base  mutation_type
-detected  breseq_alt  breseq_freq  breseq_quality  above_threshold
+detected  vcf_alt  vcf_freq  vcf_quality  above_threshold
 ```

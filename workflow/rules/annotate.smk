@@ -78,6 +78,7 @@ rule get_amino_acid_seqs:
     output:
         out_aa="results/annotation/{ref_id}/{ref_id}.faa",
         out_nt="results/annotation/{ref_id}/{ref_id}.fna",
+        out_gff="results/annotation/{ref_id}/{ref_id}.gff",
     log:
         "logs/annotation/{ref_id}.prodigal.log",
     conda:
@@ -92,6 +93,8 @@ rule get_amino_acid_seqs:
             -i {input.ref} \
             -a {output.out_aa} \
             -d {output.out_nt} \
+            -f gff \
+            -o {output.out_gff} \
             &> {log}
         """
 
@@ -126,11 +129,17 @@ rule mmseqs_search:
         cpus_per_task=int(config["annotation"].get("threads", 16)),
     shell:
         """
+        dbpath={input.db_path}
+        if [[ dbpath == *.f*a ]]
+            dbpath_temp="${{filename%.*}}"
+            mmseqs createdb $dbpath $dbpath_temp
+            dbpath=$dbpath_temp
+        fi
         mmseqs easy-search \
             --split-memory-limit {params.split_mem_limit} \
             --threads {resources.cpus_per_task} \
             {input.query} \
-            {input.db_path} \
+            $dbpath \
             {output.hits} \
             /tmp/$SLURM_JOB_ID
             &> {log}

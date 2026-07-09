@@ -115,6 +115,7 @@ rule generate_report:
         challenging="results/annotation/{ref_id}/{ref_id}.challenging.tsv",
         # mmseqs hit files (one per database)
         db_hits=report_annotation_hits,
+        gff="results/annotation/{ref_id}/{ref_id}.gff",
     output:
         pdf="results/reports/{ref_id}_report.pdf",
     params:

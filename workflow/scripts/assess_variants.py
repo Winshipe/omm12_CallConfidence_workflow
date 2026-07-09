@@ -69,11 +69,11 @@ combined_variants = pd.merge(\
     ground_truth,\
     found_variants,\
     how="outer",\
-    on=["CHROM","POS","REF","ALT"],\ 
+    on=["CHROM","POS","REF","ALT"],\
     indicator=True\
     )[["CHROM","POS","REF","ALT","_merge"]]
 
-combined_variants["Truthiness"] = combined_variants["_merge"].apply(lambda value: {"both":"TP", "right_only": "FP", "left_only":"FN"})
+combined_variants["Truthiness"] = combined_variants["_merge"].apply(lambda value: {"both":"TP", "right_only": "FP", "left_only":"FN"}[value])
 combined_variants = combined_variants.drop('_merge', axis=1)
 
 combined_variants["replicate"] = snakemake.params.replicate

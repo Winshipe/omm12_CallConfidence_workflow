@@ -44,7 +44,7 @@ def replicate_seed(wildcards):
     """
     base   = int(config["mutation"]["base_seed"])
     # wildcards.replicate is e.g. "rep1"; strip the "rep" prefix to get the index
-    index  = int(wildcards.replicate.replace("rep", ""))
+    index  = int(wildcards.replicate.replace("rep", ""))*10
     return base + index
 
 

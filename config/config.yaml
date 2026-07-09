@@ -6,8 +6,7 @@
 # Keys are short IDs used throughout the pipeline.
 # Values are paths to the reference FASTA files.
 references:
-  ref_A: "resources/references/ref_A.fasta"
-  ref_B: "resources/references/ref_B.fasta"
+  Acutalibacter_muris: "resources/CP065321.fa"  
 
 # ── Replicates ───────────────────────────────────────────────────────────────
 # Number of independent replicates to run for mutation, read simulation,
@@ -23,7 +22,7 @@ mutation:
   substitution_rate: 0.001     # per-site substitution rate
   # Tamura-Nei-specific parameters (ignored for Jukes-Cantor)
   kappa: 2.0                   # transition / transversion ratio
-  gc_freq: 0.5                 # equilibrium GC frequency (pi_G + pi_C)
+  gc_freq: 0.5                 
   # Base random seed.  Each replicate derives its own seed from this value
   # (base_seed + replicate_index) so results are fully reproducible.
   base_seed: 42
@@ -31,9 +30,7 @@ mutation:
 # ── Annotation ───────────────────────────────────────────────────────────────
 # Annotation is run once per reference genome (not per replicate).
 annotation:
-  mmseqs_databases:
-    ISfinder: "resources/databases/ISfinder_mmseqs"
-    Dfam_TE:  "resources/databases/Dfam_TE_mmseqs"
+  mmseqs_databases: "resources/mmseqs/mobileOG"
   split_mem_limit: "164G"
   max_memory: "196G"
   threads: 8
@@ -43,7 +40,7 @@ simulation:
   platform: "MSv3"             # ART sequencing platform/instrument
   read_length: 150
   mean_fragment_length: 400
-  std_fragment_length: 50
+  std_fragment_length: 100
   coverage: 50                 # fold coverage per reference per replicate
   # Optional: supply real reads to learn a custom sequencing error profile.
   # Leave as null to use ART's built-in MiSeq (MSv3) profile.
@@ -61,36 +58,35 @@ simulation:
 # The same scenario definition is used for every replicate; only the underlying
 # mutations and simulated reads differ between replicates.
 scenarios:
-  scenario_equal_mix:
-    - ref_id: ref_A
-      mutated_fraction: 0.5
-      abundance: 1.0
-    - ref_id: ref_B
-      mutated_fraction: 0.5
-      abundance: 1.0
-
-  scenario_rare_mutant:
-    - ref_id: ref_A
-      mutated_fraction: 0.05
-      abundance: 1.0
-    - ref_id: ref_B
-      mutated_fraction: 0.0
-      abundance: 1.0
-
   scenario_single_ref:
-    - ref_id: ref_A
-      mutated_fraction: 1.0
+    - ref_id: Acutalibacter_muris
+      mutated_fraction: 0.5
       abundance: 1.0
 
-# Total read pairs to produce per blended scenario per replicate
-blend_total_reads: 1000000
 
-# ── Variant calling (breseq) ─────────────────────────────────────────────────
+# ── Variant calling (BWA + GATK) ─────────────────────────────────────────────
 variant_calling:
-  breseq_extra_flags: ""       # additional flags passed directly to breseq
-  threads: 8
+  threads: 8          # CPU threads for BWA-MEM and GATK HaplotypeCaller
+  mem_mb: 16000       # RAM allocated to GATK steps in megabytes (16 GB is
+                      # sufficient for most bacterial genome projects)
+  min_base_quality_score: 20  # Ignore bases whose Phred quality score is below
+                              # this value (20 = 99% base-call accuracy).
+                              # Raising this makes calls more conservative.
+  gatk_extra_flags: ""        # Any additional flags to pass to HaplotypeCaller.
 
 # ── Assessment ───────────────────────────────────────────────────────────────
 assessment:
-  # Minimum breseq QUAL score to count a variant call as a true positive.
+  # Minimum QUAL score to count a variant call as a true positive.
   min_quality: 20
+
+# ── PDF reports ──────────────────────────────────────────────────────────────
+# One PDF is produced per reference genome, summarising detection performance
+# across all scenarios that include that reference.
+report:
+  # Approximate genome length (nt) used to fix the x-axis of the plots.
+  # Set to 0 to let R determine the range automatically from the data.
+  genome_length: 0
+ 
+  # Width (nt) of each genomic window used for the windowed detection summary.
+  # Smaller values give finer resolution but noisier curves.
+  window_size: 2000
