@@ -1,5 +1,4 @@
 # CallConfidence - Variant-Calling Benchmarking Pipeline
-# CallConfidence - Variant-Calling Benchmarking Pipeline
 
 A modular Snakemake workflow for benchmarking variant callers on simulated
 metagenomic reads from mixed, mutated reference sequences.
