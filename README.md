@@ -21,7 +21,6 @@ references (FASTA)
        │       (user-defined abundances & mutated fractions)
        │
        ├─► [variant_calling] → VCF file
-       ├─► [variant_calling] → VCF file
        │
        └─► [assess]          → per-mutation detection TSV
 ```
