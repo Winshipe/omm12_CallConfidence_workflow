@@ -1,4 +1,5 @@
 # CallConfidence - Variant-Calling Benchmarking Pipeline
+# CallConfidence - Variant-Calling Benchmarking Pipeline
 
 A modular Snakemake workflow for benchmarking variant callers on simulated
 metagenomic reads from mixed, mutated reference sequences.
@@ -20,6 +21,7 @@ references (FASTA)
        ├─► [blend_reads]     → per-scenario blended FASTQ pairs
        │       (user-defined abundances & mutated fractions)
        │
+       ├─► [variant_calling] → VCF file
        ├─► [variant_calling] → VCF file
        │
        └─► [assess]          → per-mutation detection TSV
@@ -159,9 +161,11 @@ Combines simulated reads according to differerent user specified relative abunda
 ### variant_calling
 
 Maps the output from blend_reads to the reference genome(s) using BWA and then calls variants with GATK HaplotypeCaller 
+Maps the output from blend_reads to the reference genome(s) using BWA and then calls variants with GATK HaplotypeCaller 
 
 ### assess
 
+Parses the VCF output and cross-references each expected
 Parses the VCF output and cross-references each expected
 mutation with the ground truth (the record of which mutations were generated), recording detection status and quality scores.
 
@@ -183,5 +187,6 @@ The assessment TSV contains the following columns:
 
 ```
 ref_id  seq_id  position  ref_base  alt_base  mutation_type
+detected  vcf_alt  vcf_freq  vcf_quality  above_threshold
 detected  vcf_alt  vcf_freq  vcf_quality  above_threshold
 ```
