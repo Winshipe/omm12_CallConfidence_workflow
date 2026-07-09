@@ -138,7 +138,7 @@ Key config keys: `mutation.model`, `mutation.substitution_rate`, `mutation.kappa
 This module uses mmseqs2 to search for hits in the databases provided by the user.
 I use the Phrog and TnCentral+ISfinder databases.  The databases for mmseqs need to be 
 downloaded from their respective websites and formatted but this is relatively simple using 
-mmseqs createdb command (mmseqs2 createdb source.fasta dbname; described more deeply in the mmseqs2 user
+mmseqs createdb command (`mmseqs2 createdb source.fasta dbname`; described more deeply in the mmseqs2 user
 manual). This module also uses prodigal to predict genes and then uses mmseqs2's clustering to group the
 genes by 90% ANI to identify close homologs.  This will then output a tsv (Tab Separated Values) with
 columns for chromosome, start, stop and information about the "dangerous" region (ie is it a TE,
