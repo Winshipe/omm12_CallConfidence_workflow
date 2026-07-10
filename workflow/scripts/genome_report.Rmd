@@ -240,7 +240,7 @@ for( i in seq(length(mapped_sams))){
             legend.position="none")
 #xmap_plot
 
-  main_plot <- cowplot::plot_grid(detection_plot,problems_plot,xmap_plot, ncol=1, align="v")
+  main_plot <- cowplot::plot_grid(detection_plot,xmap_plot, problems_plot, ncol=1, align="v")
 #complete_plot <- cowplot::plot_grid(main_plot, closest_genomes_legend, nrow=1, rel_widths = c(0.8,0.2))
 #complete_plot
   print(main_plot)
