@@ -189,6 +189,7 @@ Generates an html report with plot illustrating SNP recall across each genome an
 | `results/blended/{scenario}/{scenario}_R{1,2}.fastq.gz` | Blended scenario reads |
 | `results/variant_calling/{scenario}/output/output.vcf` | Output from variant caller (GATK) |
 | `results/assessment/{scenario}_assessment.tsv` | Per-mutation assessment |
+| `results/report/{ref_id}_report.html` | Formatted report w/ graphs & tables |
 
 The assessment TSV contains the following columns:
 
