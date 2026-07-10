@@ -22,7 +22,9 @@ references (FASTA)
        │
        ├─► [variant_calling] → VCF file
        │
-       └─► [assess]          → per-mutation detection TSV
+       ├─► [assess]          → per-mutation detection TSV
+       │
+       └─► [report]          → html report
 ```
 
 ---
