@@ -96,6 +96,7 @@ snakemake_workflow/
 │   │   ├── variant_calling.yaml
 │   │   ├── mmseqs2.yaml
 │   │   ├── mutate.yaml
+│   │   ├── prodigal.yaml
 │   │   └── python.yaml
 │   ├── rules/
 │   │   ├── annotate.smk
@@ -103,12 +104,14 @@ snakemake_workflow/
 │   │   ├── blend_reads.smk
 │   │   ├── mutate.smk
 │   │   ├── simulate_reads.smk
-│   │   └── variant_calling.smk
+│   │   ├── variant_calling.smk
+│   │   └── report.smk
 │   └── scripts/
 │       ├── annotate_repeats.py
 │       ├── assess_variants.py
 │       ├── blend_reads.py
 │       ├── mmseqs_search.py
+│       ├── genome_report.Rmd
 │       └── mutate_reference.py
 └── results/                    ← created during the run
     ├── annotation/
@@ -116,7 +119,9 @@ snakemake_workflow/
     ├── blended/
     ├── variant_calling/
     ├── mutated/
-    └── simulated/
+    ├── simulated/
+    └── report/
+
 ```
 
 ---
@@ -138,8 +143,7 @@ Key config keys: `mutation.model`, `mutation.substitution_rate`, `mutation.kappa
 ### annotate
 
 This module uses mmseqs2 to search for hits in the databases provided by the user.
-I use the Phrog and TnCentral+ISfinder databases.  The databases for mmseqs need to be 
-downloaded from their respective websites and formatted but this is relatively simple using 
+The databases for mmseqs need to be downloaded from their respective websites and formatted but this is relatively simple using 
 mmseqs createdb command (`mmseqs2 createdb sequences.fasta dbname`; described in the mmseqs2 user manual). This module also uses prodigal to 
 predict genes and then uses mmseqs2's clustering to group the genes by 90% ANI to identify
 close homologs.  This will then output a tsv (Tab Separated Values) with columns for chromosome, 
@@ -167,6 +171,9 @@ Parses the VCF output and cross-references each expected
 Parses the VCF output and cross-references each expected
 mutation with the ground truth (the record of which mutations were generated), recording detection status and quality scores.
 
+### report
+
+Generates an html report with plot illustrating SNP recall across each genome and the locations of close homologs + mobile elements along with tables which show the same
 ---
 
 ## Outputs
