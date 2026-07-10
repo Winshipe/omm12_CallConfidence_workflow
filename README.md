@@ -176,6 +176,7 @@ mutation with the ground truth (the record of which mutations were generated), r
 ### report
 
 Generates an html report with plot illustrating SNP recall across each genome and the locations of close homologs + mobile elements along with tables which show the same
+
 ---
 
 ## Outputs
