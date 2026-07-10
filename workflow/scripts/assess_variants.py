@@ -50,11 +50,11 @@ found_variants = pd.read_csv(
     snakemake.input.vcf,\
     sep="\t",\
     comment="#",\
-    names = ['CHROM', 'POS', 'ID', 'REF', 'ALT', 'QUAL', 'FILTER', 'INFO', 'FORMAT', 'scenario_equal_mix']\
+    names = ['CHROM', 'POS', 'ID', 'REF', 'ALT', 'QUAL', 'FILTER', 'INFO', 'FORMAT', 'scenario']\
 )
 
 #read the tsv containing the ground truth
-ground_truth = pd.read_csv(snakemake.input.ground_truth,sep="\t")
+ground_truth = pd.concat([pd.read_csv(path,sep="\t") for path in snakemake.input.ground_truth])
 log.info(f"Loaded {ground_truth.shape[0]} expected mutations from {snakemake.input.ground_truth}")
 ground_truth.columns = ["CHROM","POS","REF","ALT","mutation_type"] # rename columns to match the VCF names
 

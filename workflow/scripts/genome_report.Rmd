@@ -1,22 +1,26 @@
 ---
-title: "Variant Detection QA/QC Report"
+title: "Variant Detection Report"
 subtitle: "`r params$ref_id`"
 date: "`r format(Sys.Date(), '%Y-%m-%d')`"
 output:
-  pdf_document:
+  html_document:
     toc: false
-    fig_width: 14
-    fig_height: 10
+    df_print: paged
+  
 params:
-  # These are filled in by the Snakemake rule at render time.
-  # Do not edit them here — edit the rule parameters instead.
-  ref_id:          "ref_A"           # Reference genome identifier
-  assessment_tsvs: ""                # Comma-separated paths to assessment TSVs
-  challenging_tsv: ""                # Path to .challenging.tsv (homologs + repeats)
-  db_hit_files:    ""                # Comma-separated paths to mmseqs hit files
-  db_names:        ""                # Comma-separated names matching db_hit_files
-  genome_length:   4000000           # Approximate genome length (nt) for x-axis
-  window_size:     2000              # Bin width (nt) for windowed summaries
+  ref_id: placeholder 
+  workingdir: placeholder
+  scenario_list: placeholder
+  assessment_tsvs: placeholder
+  challenging_tsv: placeholder
+  mapped_sam: placeholder
+  unmut_sam: placeholder
+  mut_sam: placeholder
+  gff: placeholder
+  db_hit_files: placeholder
+  db_names: placeholder
+  genome_length: placeholder
+  window_size: placeholder
 ---
 
 ```{r setup, include=FALSE}
@@ -32,9 +36,11 @@ knitr::opts_chunk$set(
   echo    = FALSE,   # hide code from the PDF
   warning = FALSE,
   message = FALSE,
-  fig.align = "center"
+  fig.align = "center"#,
+#  out.width="50%",
+#  out.height="50%"
 )
-
+knitr::opts_knit$set(root.dir = params$workingdir) #same as setwd but knitr needs to feel special
 # ── Helper: parse a comma-separated parameter string ────────────────────────
 split_param <- function(x) {
   # Returns a character vector; returns character(0) if x is blank / "".
@@ -44,277 +50,220 @@ split_param <- function(x) {
 }
 ```
 
-```{r load_assessment}
-# ── 1. Assessment data (one TSV per scenario that includes this ref) ─────────
-#
-# Each TSV has columns:
-#   ref_id, seq_id, position, ref_base, alt_base, mutation_type,
-#   detected, vcf_alt, vcf_freq, vcf_quality, above_threshold
-#
-# Multiple scenarios are stacked into one data frame; a "scenario" column is
-# added so results can be compared side-by-side.
+```{r load variant calling}
+vcr_names <- c("CHROM","POS","REF","ALT","Truthiness","scenario")
+variant_calling_results <- data.frame(matrix(ncol = length(vcr_names), nrow = 0))
+colnames(variant_calling_results) <- vcr_names 
+  #c('ref_id','seq_id','position','ref_base','alt_base','mutation_type','detected','vcf_alt', 'vcf_freq','vcf_quality','above_threshold', 'replicate','replicate','scenario')
 
-assessment_paths <- split_param(params$assessment_tsvs)
-
-if (length(assessment_paths) == 0) {
-  stop(paste("No assessment TSV paths supplied for ref_id:", params$ref_id))
+scenarios <- split_param(params$scenario_list)
+assessments <- split_param(params$assessment_tsvs)
+for(i in seq(length(scenarios))){
+  temp <- read_delim(assessments[[i]])
+  temp$scenario = scenarios[[i]]
+  variant_calling_results <- rbind(variant_calling_results, temp)
 }
 
-assessment_raw <- map_dfr(assessment_paths, function(path) {
-  # Derive scenario name from the file name: <scenario>_assessment.tsv
-  scenario_name <- sub("_assessment\\.tsv$", "", basename(path))
-  read_tsv(path, col_types = cols(
-    ref_id          = col_character(),
-    seq_id          = col_character(),
-    position        = col_double(),
-    ref_base        = col_character(),
-    alt_base        = col_character(),
-    mutation_type   = col_character(),
-    detected        = col_logical(),
-    vcf_alt         = col_character(),
-    vcf_freq        = col_double(),
-    vcf_quality     = col_double(),
-    above_threshold = col_logical()
-  )) %>%
-    filter(ref_id == params$ref_id) %>%
-    mutate(scenario = scenario_name)
-})
+genome_len = ifelse(params$genome_length == 0, max(variant_calling_results$POS), params$genome_length)
+#variant_calling_results <- variant_calling_results %>% filter(ref_id == sub(" ","_",params$ref_id))
 ```
 
-```{r load_annotation}
-# ── 2. Challenging / homologous regions ─────────────────────────────────────
-#
-# File produced by the find_homologs rule (annotate.smk).
-# 6-column BED-style TSV: chrom  start  stop  name  score  strand
-# Lines starting with "#" are comments.
 
-challenging <- read_tsv(
-  params$challenging_tsv,
-  comment   = "#",
-  col_names = c("chrom", "start", "stop", "name", "score", "strand"),
-  col_types = cols(
-    chrom  = col_character(),
-    start  = col_double(),
-    stop   = col_double(),
-    name   = col_character(),
-    score  = col_character(),
-    strand = col_character()
-  )
-) %>%
-  mutate(label = "Has Close Homolog")
-```
-
-```{r load_db_hits}
-# ── 3. MMseqs2 annotation hits (transposons, IS elements, etc.) ──────────────
-#
-# The mmseqs easy-search produces m8-format hit tables with columns:
-#   query  target  pident  alnlen  mismatch  gapopen
-#   qstart qend    tstart  tend    evalue    bitscore
-#
-# Each database supplies one file. We label each hit with its database name
-# and combine them.
-
-db_paths <- split_param(params$db_hit_files)
+```{r}
+m8_file_cols <- c("query","target","fident","alnlen","mismatch","gapopen","qstart","qend","tstart","tend","evalue","bits")
+me_hits <- data.frame(matrix(nrow=0, ncol=length(m8_file_cols)))
+colnames(me_hits)<- m8_file_cols
 db_names <- split_param(params$db_names)
-
-m8_cols <- c("query","target","pident","alnlen","mismatch","gapopen",
-             "qstart","qend","tstart","tend","evalue","bitscore")
-
-if (length(db_paths) > 0 && length(db_paths) == length(db_names)) {
-  db_hits <- map2_dfr(db_paths, db_names, function(path, db_name) {
-    read_tsv(path, col_names = m8_cols, col_types = cols(
-      query    = col_character(),
-      target   = col_character(),
-      pident   = col_double(),
-      alnlen   = col_double(),
-      mismatch = col_double(),
-      gapopen  = col_double(),
-      qstart   = col_double(),
-      qend     = col_double(),
-      tstart   = col_double(),
-      tend     = col_double(),
-      evalue   = col_double(),
-      bitscore = col_double()
-    )) %>%
-      mutate(
-        db_name = db_name,
-        # Classify hit type from the database name and target string.
-        # "IS" databases → IS element; "Tn" in target → transposon; rest → repeat
-        label = case_when(
-          str_detect(target, "Tn")          ~ "Transposon",
-          str_detect(db_name, "(?i)IS|ISfinder") ~ "IS Element",
-          str_detect(db_name, "(?i)TE|Dfam")    ~ "Transposable Element",
-          TRUE                               ~ paste("Repeat:", db_name)
-        )
-      )
-  })
-} else {
-  # No database hits configured — create an empty placeholder
-  db_hits <- tibble(
-    query = character(), target = character(),
-    qstart = double(), qend = double(),
-    label = character(), db_name = character()
-  )
+db_m8_files <- split_param(params$db_hit_files)
+for(i in seq(length(db_names))){
+  temp <- read_delim(db_m8_files[[i]], col_names=m8_file_cols)
+  temp <- temp %>% filter((evalue < 1e-10) & (alnlen >= 200))
+  temp <- temp %>% group_by(query) %>% slice_min(evalue, n=1)
+  temp$label = ifelse(db_names[[i]] == "tes_iss",ifelse(str_detect(temp$target, "Tn"),"Transposon (TnCentral + ISfinder)", "IS (TnCentral + ISfinder)"),ifelse(db_names[[i]] == "phrog", "Phage (Phrog)", db_names[[i]]))
+  me_hits <- rbind(me_hits, temp)
 }
+duplicates <- read_delim(params$challenging_tsv,comment = "#", col_names = c("chrom","start","stop","name","score","strand"))
 ```
 
-```{r build_annotation_track}
-# ── 4. Combine all annotation types into a single "problem areas" data frame ─
-#
-# Each row represents one annotated interval:
-#   chrom  start  stop  label
-#
-# The query name from Prodigal has the format <contig>_<gene_index>.
-# We strip the trailing gene index to recover the contig / chromosome name.
-
-annotation_track <- bind_rows(
-  # a) Repeat / TE / IS hits from mmseqs
-  db_hits %>%
-    select(chrom = query, start = qstart, stop = qend, label),
-
-  # b) Homologous regions (already has chrom / start / stop / label)
-  challenging %>%
-    select(chrom, start, stop, label)
-) %>%
-  # Strip Prodigal gene index from contig name (e.g. "contig_001_3" → "contig_001")
-  mutate(chrom = sub("_[0-9]+$", "", chrom)) %>%
-  distinct()
+```{r}
+gene_start_stops <- read_delim(
+  params$gff,
+  comment="#",
+  delim="\t",
+  col_names = c("chrom","source","type","gstart","gend","score","strand","phase","attributes")
+  ) %>%
+  mutate(
+    id_ = grep("(?:ID=[0-9]_)[0-9]+(?:;)", attributes),
+    query = paste0(chrom,"_",id_)
+    ) %>% 
+  select(chrom, query, gstart, gend)
 ```
 
-```{r compute_windowed_detection}
-# ── 5. Windowed detection summary ───────────────────────────────────────────
-#
-# For each (scenario × contig × genomic window) bin we compute:
-#   detect_pct         — fraction of expected mutations that were detected
-#   above_threshold_pct — fraction also passing the quality threshold
-#   n                  — number of expected mutations in this window
+```{r}
+me_hits <- left_join(
+    me_hits,
+    gene_start_stops
+    ) %>% mutate(start = qstart + gstart, stop = qend + gend) %>% select(chrom, start, stop, label, evalue, fident, target)
+problem_areas <- rbind(
+    me_hits %>% select(chrom, start, stop, label),
+    duplicates %>% select(chrom, start, stop) %>% mutate(label = "Has Close Homolog")
+  ) %>% 
+  distinct() %>%
+  mutate(chrom = sub("_[0-9]+$","",chrom))
 
-window_size <- as.integer(params$window_size)
 
-windowed <- assessment_raw %>%
-  arrange(seq_id, position) %>%
-  mutate(window = floor(position / window_size)) %>%
-  group_by(scenario, ref_id, seq_id, window) %>%
+```
+
+```{r}
+vcr_summ <- variant_calling_results %>%
+  group_by(CHROM, POS,scenario) %>%
+  slice_head(n=1) %>%
+  ungroup() %>%
+  mutate(POS = as.numeric(POS)) %>%
+  arrange(CHROM, POS) %>%
+  mutate(window = floor(POS / params$window_size)) %>%
+  group_by(CHROM, window,scenario) %>%
   summarise(
-    detect_pct          = mean(detected,        na.rm = TRUE),
-    above_threshold_pct = mean(above_threshold, na.rm = TRUE),
-    n                   = n(),
-    .groups = "drop"
-  )
+    recalled_vars = sum(Truthiness == "TP"),
+    missed_vars = sum(Truthiness == "FN"),
+    false_pos = sum(Truthiness == "FP"),
+    n=n()) %>%
+  mutate(
+    recall_pct = recalled_vars / (recalled_vars + missed_vars) *100,
+    precision_pct = recalled_vars / (recalled_vars+false_pos) *100) %>% ungroup()
+
+
+#detection_plot
 ```
 
-```{r detection_plot, fig.height=3}
-# ── Plot 1: Detection rate (% mutations above quality threshold per window) ──
-#
-# One line per scenario so the user can compare across blending conditions.
-# The x-axis is suppressed here; a shared axis is shown in the problems track.
 
-detection_plot <- windowed %>%
-  ggplot(aes(
-    x     = window * window_size,
-    y     = above_threshold_pct * 100,
-    colour = scenario,
-    group  = scenario
-  )) +
-  geom_line(linewidth = 0.6) +
-  theme_bw() +
-  labs(y = "Detection %", colour = "Scenario") +
-  coord_cartesian(xlim = c(0, params$genome_length)) +
-  theme(
-    text             = element_text(size = 12),
-    axis.title.x     = element_blank(),
-    axis.text.x      = element_blank(),
-    axis.ticks.x     = element_blank(),
-    legend.position  = "right",
-    legend.text      = element_text(size = 9)
-  )
-```
-
-```{r annotation_plot, fig.height=3}
-# ── Plot 2: Genomic annotation track ────────────────────────────────────────
-#
-# Each annotation type is drawn as a coloured horizontal segment at its own
-# "level" on the y-axis.  This makes it easy to visually line up problem
-# regions with detection failures in the plot above.
-
-annotation_levels <- c(
-  "Has Close Homolog",
-  "Transposable Element",
-  "Transposon",
-  "IS Element"
-)
-# Include any extra database-specific labels that aren't in the preset list
-extra_levels <- setdiff(unique(annotation_track$label), annotation_levels)
-all_levels   <- c(annotation_levels, extra_levels)
-
-annotation_plot <- annotation_track %>%
-  mutate(level = factor(label, levels = all_levels)) %>%
+```{r}
+problems_plot <- problem_areas %>% mutate(level = factor(
+    label,
+    levels = c("Phage (Phrog)","Transposon (TnCentral + ISfinder)","IS (TnCentral + ISfinder)","Has Close Homolog")
+    )) %>%
   ggplot() +
   geom_segment(
-    aes(x = start, xend = stop, y = level, yend = level, colour = level),
-    linewidth = 6
-  ) +
-  theme_bw() +
-  coord_cartesian(xlim = c(0, params$genome_length)) +
-  labs(y = "", x = "Genomic position (nt)") +
-  theme(
-    text            = element_text(size = 12),
-    legend.position = "none"
+    aes(x = start, xend= stop, y=level, color=level), linewidth = 8
+  ) + 
+  theme_bw() + 
+  xlim(0,genome_len) +
+  labs(y="", x="Nt position") + 
+  theme(text=element_text(family="Helvetica",size=12),
+        legend.position = "none",
+        axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+#problems_plot
+```
+
+## Summary plots
+
+```{r xmapping}
+mapped_sams <- split_param(params$mapped_sam)
+source_reads_ums <- params$unmut_sam
+source_reads_mts <- params$mut_sam
+for( i in seq(length(mapped_sams))){
+  current_scenario = scenarios[i]
+  current_mapped = mapped_sams[i]
+  current_um_reads = source_reads_ums
+  current_mt_reads = source_reads_mts
+  sam_colnames <- c("qname","flag","rname","pos","mapq","cigar","rnext","pnext","tlen","seq","qual")
+  mapped_reads <- read_delim(current_mapped, col_names=sam_colnames, comment="@") %>% select(qname, rname, pos, pnext, tlen) %>% filter(rname == variant_calling_results$CHROM[[1]])
+  source_reads_unmut <- read_delim(current_um_reads,col_names=sam_colnames, comment="@")%>% select(qname, rname, pos, pnext, tlen)
+  source_reads_mut <- read_delim(current_mt_reads,col_names=sam_colnames, comment="@")%>% select(qname, rname, pos, pnext, tlen)
+  
+  mapped_reads <- left_join(left_join(mapped_reads, source_reads_unmut, join_by(qname), suffix = c("_m","_umgt")), source_reads_mut %>% rename(rname_mtgt = rname, pos_mtgt = pos, pnext_mtgt = pnext, tlen_mtgt = tlen), join_by(qname))
+  
+  xm_same_genome = "XM Same genome"
+  xm_diff_genome = "XM Different genome"
+  correct = "Correct"
+  mapped_reads <- mapped_reads %>% mutate(
+    xmapped = ifelse(
+      #is the mapped position inside the unmutated read positions (umgt -> unmutated ground truth) OR inside the mutated read positions (mtgt -> mutant ground truth)
+      (rname_m == rname_mtgt & !is.na(rname_mtgt)) | (rname_m == rname_umgt & !is.na(rname_umgt)),
+      ifelse(
+        (((pos_umgt <= pos_m) & (pos_m <= (pos_umgt + tlen_umgt) )) | (((pos_umgt + tlen_umgt) <= pos_m) & ( pos_m <= pos_umgt))) | 
+          (((pos_mtgt <= pos_m) & (pos_m <= (pos_mtgt + tlen_mtgt) )) | (((pos_mtgt + tlen_mtgt) <= pos_m) & ( pos_m <= pos_mtgt))), 
+        correct, # mapped position is inside of the area the read was generated from
+        xm_same_genome # mapped position is outside 
+      ),
+      xm_diff_genome # read comes from a different contig all together
+      )
+    )
+  mapped_reads <- mapped_reads %>% mutate(window = floor(pos_m / params$window_size))
+  mapped_reads_sum <- mapped_reads %>% group_by(window) %>% summarise(
+    xmapped_same_genome = sum(xmapped == xm_same_genome)/n(),
+    xmapped_diff_genome = sum(xmapped == xm_diff_genome)/n(),
+    precision = sum(xmapped == correct) / n()
   )
+  mapped_reads_sum <- mapped_reads_sum %>%
+    pivot_longer(
+      cols=c(xmapped_same_genome, xmapped_diff_genome,precision),
+      names_to = "label",
+      values_to = "values"
+      ) %>%
+    mutate(label = ifelse(
+      label == "xmapped_same_genome",
+      "Same genome",
+      ifelse(
+        label == "xmapped_diff_genome",
+        "Other genome",
+        label
+      )
+    ))
+  if(max((mapped_reads_sum %>% filter(label == "Other genome"))$values,na.rm=T) < 0.1){
+    mapped_reads_sum_pltable <- mapped_reads_sum %>% filter(label == "Same genome")
+  } else {
+    mapped_reads_sum_pltable <- mapped_reads_sum %>% filter(label != "precision")
+  }
+  xmap_plot <- mapped_reads_sum_pltable %>%
+    ggplot(aes(x=window*params$window_size, y=values*100, color=label)) +
+    geom_line() + 
+    theme_bw() +
+    labs(y="Contaminantion Pct",x="Nt position") +
+    xlim(0,genome_len) +
+    ylim(0,100) +
+    #scale_color_discrete_qualitative(palette = "Dark 3") +
+    theme(text=element_text(family="Helvetica",size=12))
+  detection_plot <- vcr_summ %>%
+    filter(scenario == current_scenario) %>%
+    ggplot(aes(x=window*params$window_size, y=recall_pct, color=n)) +
+    geom_line() +
+    theme_bw() +
+    labs(y="SNP Recall %",title=current_scenario) +
+    xlim(0,genome_len) +
+    theme(text=element_text(family="Helvetica",size=12),
+            axis.title.x=element_blank(),
+            axis.text.x=element_blank(),
+            axis.ticks.x=element_blank(),
+            legend.position="none")
+#xmap_plot
+
+  main_plot <- cowplot::plot_grid(detection_plot,problems_plot,xmap_plot, ncol=1, align="v")
+#complete_plot <- cowplot::plot_grid(main_plot, closest_genomes_legend, nrow=1, rel_widths = c(0.8,0.2))
+#complete_plot
+  print(main_plot)
+}
 ```
+## Regions with low recall ability or low precision
 
-```{r combine_plots, fig.width=14, fig.height=7}
-# ── Combined figure ──────────────────────────────────────────────────────────
-#
-# Stack detection rate (top) above the annotation track (bottom), aligned on
-# the same x-axis.  The legend for the detection lines is placed to the right.
-
-detection_legend <- get_legend(detection_plot)
-detection_no_leg <- detection_plot + theme(legend.position = "none")
-
-main_stack <- plot_grid(
-  detection_no_leg,
-  annotation_plot,
-  ncol   = 1,
-  align  = "v",       # vertically align the x-axes
-  rel_heights = c(1.2, 1)
-)
-
-complete_plot <- plot_grid(
-  main_stack,
-  detection_legend,
-  nrow       = 1,
-  rel_widths = c(0.85, 0.15)
-)
-
-complete_plot
-```
-
-\newpage
-
-## Tabular summary
-
-### Detection statistics by scenario
-
-```{r table_by_scenario}
-# ── Tabular summary 1: per-scenario detection statistics ─────────────────────
-#
-# Counts and percentages for each scenario that includes this reference.
-
-summary_by_scenario <- assessment_raw %>%
-  group_by(scenario) %>%
-  summarise(
-    `Total expected mutations` = n(),
-    `Detected (any quality)`   = sum(detected,        na.rm = TRUE),
-    `Above quality threshold`  = sum(above_threshold, na.rm = TRUE),
-    `Detection %`              = round(mean(detected,        na.rm = TRUE) * 100, 1),
-    `Above-threshold %`        = round(mean(above_threshold, na.rm = TRUE) * 100, 1),
-    .groups = "drop"
-  ) %>%
-  rename(Scenario = scenario)
-
+```{r}
+recall_summary <- vcr_summ %>% 
+  ungroup() %>%
+  filter((recall_pct < 90)|(precision_pct < 90)) %>%
+  mutate(window_start = window*params$window_size,window_end = window*params$window_size+params$window_size) %>%
+  select(CHROM, n, window_start, window_end, recall_pct, precision_pct, scenario) %>%
+  rename(
+    `Simulated Scenario` = scenario,
+    CONTIG = CHROM,
+    `N variants`=n,
+    Start=window_start,
+    End = window_end,
+    `Precision`=precision_pct,
+    `Recall`=recall_pct) 
 kbl(
-  summary_by_scenario,
+  recall_summary,
   booktabs = TRUE,
   caption  = paste("Detection summary for reference:", params$ref_id)
 ) %>%
@@ -324,27 +273,14 @@ kbl(
   )
 ```
 
-### Detection statistics by mutation type
-
-```{r table_by_mut_type}
-# ── Tabular summary 2: breakdown by mutation type (transition / transversion) ─
-
-summary_by_type <- assessment_raw %>%
-  group_by(scenario, mutation_type) %>%
-  summarise(
-    `Total`             = n(),
-    `Detected`          = sum(detected,        na.rm = TRUE),
-    `Above threshold`   = sum(above_threshold, na.rm = TRUE),
-    `Detection %`       = round(mean(detected,        na.rm = TRUE) * 100, 1),
-    `Above-threshold %` = round(mean(above_threshold, na.rm = TRUE) * 100, 1),
-    .groups = "drop"
-  ) %>%
-  rename(Scenario = scenario, `Mutation type` = mutation_type)
-
+## Duplicated genes
+```{r}
 kbl(
-  summary_by_type,
+  duplicates %>%
+    select(chrom, start, stop, name) %>%
+    rename(contig = chrom, `Gene name` = name),
   booktabs = TRUE,
-  caption  = "Detection broken down by mutation type"
+  caption  = paste("Duplicated genes at 90pct ANI or higher:", params$ref_id)
 ) %>%
   kable_styling(
     latex_options = c("striped", "hold_position"),
@@ -352,33 +288,28 @@ kbl(
   )
 ```
 
-### Annotated regions summary
+## Regions with hits to supplied databases
 
-```{r table_annotation}
-# ── Tabular summary 3: count and total span of each annotation category ───────
-
-if (nrow(annotation_track) > 0) {
-  annotation_summary <- annotation_track %>%
-    mutate(span = abs(stop - start)) %>%
-    group_by(label) %>%
-    summarise(
-      `Regions`   = n(),
-      `Total span (nt)` = sum(span, na.rm = TRUE),
-      `Mean span (nt)`  = round(mean(span, na.rm = TRUE)),
-      .groups = "drop"
-    ) %>%
-    rename(`Annotation type` = label)
-
-  kbl(
-    annotation_summary,
-    booktabs = TRUE,
-    caption  = paste("Annotated regions in reference:", params$ref_id)
-  ) %>%
-    kable_styling(
-      latex_options = c("striped", "hold_position"),
-      font_size     = 10
-    )
-} else {
-  cat("No annotated regions found for this reference.\n")
-}
+```{r}
+kbl(
+  me_hits %>%
+    mutate(evalue = log10(evalue)) %>%
+    rename(
+          contig = chrom,
+          begin = start,
+          end = stop,
+           Identity = fident,
+           Hit = target,
+           Gene = query,
+           `log10 evalue` = evalue) %>%
+    select(contig, begin, end, Identity, Hit, Gene, `log10 evalue`) %>%
+    arrange(contig, begin),
+  booktabs = TRUE,
+  caption  = paste("Hits against supplied ME databases:", params$ref_id)
+) %>%
+  kable_styling(
+    latex_options = c("striped", "hold_position"),
+    font_size     = 10
+  )
 ```
+

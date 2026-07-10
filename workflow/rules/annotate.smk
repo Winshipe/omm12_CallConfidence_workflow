@@ -130,7 +130,7 @@ rule mmseqs_search:
     shell:
         """
         dbpath={input.db_path}
-        if [[ dbpath == *.f*a ]]
+        if [[ dbpath == *.f*a ]]; then
             dbpath_temp="${{filename%.*}}"
             mmseqs createdb $dbpath $dbpath_temp
             dbpath=$dbpath_temp

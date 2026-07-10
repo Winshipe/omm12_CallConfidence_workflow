@@ -30,7 +30,9 @@ mutation:
 # ── Annotation ───────────────────────────────────────────────────────────────
 # Annotation is run once per reference genome (not per replicate).
 annotation:
-  mmseqs_databases: "resources/mmseqs/mobileOG"
+  mmseqs_databases: 
+    mobileOG:
+      "resources/mmseqs/mobileOG"
   split_mem_limit: "164G"
   max_memory: "196G"
   threads: 8

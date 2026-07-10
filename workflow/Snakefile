@@ -104,6 +104,6 @@ rule all:
         #   • Annotation track (TEs, IS elements, homologous regions)
         #   • Summary tables (per-scenario and per-mutation-type)
         expand(
-            "results/reports/{ref_id}_report.pdf",
+            "results/report/{ref_id}_report.html",
             ref_id=config["references"],
         ),

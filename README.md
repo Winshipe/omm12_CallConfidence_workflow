@@ -145,7 +145,7 @@ downloaded from their respective websites and formatted but this is relatively s
 mmseqs createdb command (`mmseqs2 createdb sequences.fasta dbname`; described in the mmseqs2 user manual). This module also uses prodigal to 
 predict genes and then uses mmseqs2's clustering to group the genes by 90% ANI to identify
 close homologs.  This will then output a tsv (Tab Separated Values) with columns for chromosome, 
-start, stop and information about the "dangerous" region (ie is it a TE, IS, phage or duplicated).
+start, stop and information about the "dangerous" region (ie is it a TE, IS, phage or duplicated).  Please note that this step is very memory/RAM intensive
 
 ### simulate_reads
 

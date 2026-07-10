@@ -179,6 +179,7 @@ rule bwa_align:
         ref =rules.bwa_index.output.ref,
         bwt =rules.bwa_index.output.bwt,   # explicit dependency on index files
     output:
+        sam ="results/variant_calling/{scenario}/{replicate}/aligned.sam",
         bam ="results/variant_calling/{scenario}/{replicate}/aligned.bam",
         bai ="results/variant_calling/{scenario}/{replicate}/aligned.bam.bai",
         nc = temp("results/variant_calling/{scenario}/{replicate}/namecollate.bam.tmp"),
@@ -236,6 +237,7 @@ rule bwa_align:
 
         # Index the BAM so that GATK can jump to any genomic position quickly.
         samtools index {output.bam} >> {log} 2>&1
+        samtools view {output.bam} > {output.sam}
         """
 
 

@@ -128,6 +128,7 @@ rule simulate_reads:
     output:
         r1="results/simulated/{ref_id}/{replicate}/{mutated}/{ref_id}_R1.fastq.gz",
         r2="results/simulated/{ref_id}/{replicate}/{mutated}/{ref_id}_R2.fastq.gz",
+        sam="results/simulated/{ref_id}/{replicate}/{mutated}/{ref_id}_.sam"
     params:
         profile_flags = art_profile_flags,
         read_len      = config["simulation"]["read_length"],

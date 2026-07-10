@@ -28,7 +28,7 @@ Inputs consumed
 
 Outputs
 -------
-  results/reports/{ref_id}_report.pdf
+  results/report/{ref_id}_report.pdf
 
 Configuration keys used
 -----------------------
@@ -72,6 +72,15 @@ def report_assessment_tsvs(wildcards):
         for scenario in scenarios_for_ref(wildcards.ref_id)
     ]
 
+def report_mapped_reads(wildcards):
+    """
+    Return the list of assessment TSV paths for every scenario that
+    includes this ref_id.
+    """
+    return [
+        f"results/variant_calling/{scenario}/rep1/aligned.sam"
+        for scenario in scenarios_for_ref(wildcards.ref_id)
+    ]
 
 def report_annotation_hits(wildcards):
     """
@@ -116,8 +125,11 @@ rule generate_report:
         # mmseqs hit files (one per database)
         db_hits=report_annotation_hits,
         gff="results/annotation/{ref_id}/{ref_id}.gff",
+        mut_reads="results/simulated/{ref_id}/rep1/mutated/{ref_id}_.sam",
+        unmut_reads="results/simulated/{ref_id}/rep1/unmutated/{ref_id}_.sam",
+        mapped_reads=report_mapped_reads
     output:
-        pdf="results/reports/{ref_id}_report.pdf",
+        html="results/report/{ref_id}_report.html",
     params:
         # Genome length for the x-axis.  Read from config if present,
         # otherwise default to 0 (R Markdown will compute it from the data).
@@ -152,18 +164,25 @@ rule generate_report:
         #   output_file      : absolute path prevents working-directory issues
         #   params           : named list of parameters injected into the template
         """
+        mkdir -p results/report
         Rscript --vanilla -e "
           rmarkdown::render(
             input       = '{input.rmd}',
-            output_file = file.path(getwd(), '{output.pdf}'),
+            output_file = file.path('"""+os.getcwd()+"""', '{output.html}'),
             params      = list(
+              scenario        = '{wildcards.scenario}',
+              workingdir      = '""" + os.getcwd() + """',
               ref_id          = '{wildcards.ref_id}',
               assessment_tsvs = '{params.assessment_tsvs}',
               challenging_tsv = '{input.challenging}',
               db_hit_files    = '{params.db_hit_files}',
               db_names        = '{params.db_names}',
               genome_length   = {params.genome_length},
-              window_size     = {params.window_size}
+              window_size     = {params.window_size},
+              unmut_sam       = '{input.unmut_reads}',
+              mut_sam         = '{input.mut_reads}',
+              mapped_sam      = '{input.mapped_reads}',
+              gff             = '{input.gff}' 
             )
           )
         " &> {log}
