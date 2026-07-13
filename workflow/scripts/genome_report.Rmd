@@ -70,11 +70,11 @@ variant_calling_results <- data.frame(matrix(ncol = length(vcr_names), nrow = 0)
 colnames(variant_calling_results) <- vcr_names 
   #c('ref_id','seq_id','position','ref_base','alt_base','mutation_type','detected','vcf_alt', 'vcf_freq','vcf_quality','above_threshold', 'replicate','replicate','scenario')
 
-scenarios <- split_param(params$scenario_list)
+#scenarios <- split_param(params$scenario_list)
 assessments <- split_param(params$assessment_tsvs)
-for(i in seq(length(scenarios))){
+for(i in seq(length(assessments))){
   temp <- read_delim(assessments[[i]])
-  temp$scenario = scenarios[[i]]
+  temp$scenario = gsub("_all_replicates.tsv","",gsub("scenario_","",assessments[[i]]))
   variant_calling_results <- rbind(variant_calling_results, temp)
 }
 
@@ -143,7 +143,6 @@ vcr_summ <- variant_calling_results %>%
 ```{r}
 problems_plot <- problem_areas %>% mutate(level = factor(
     label,
-    levels = c("Phage (Phrog)","Transposon (TnCentral + ISfinder)","IS (TnCentral + ISfinder)","Has Close Homolog")
     )) %>%
   ggplot() +
   geom_segment(
@@ -153,10 +152,10 @@ problems_plot <- problem_areas %>% mutate(level = factor(
   xlim(0,genome_len) +
   labs(y="", x="Nt position") + 
   theme(text=element_text(family="Helvetica",size=12),
-        legend.position = "none",
-        axis.title.x=element_blank(),
-        axis.text.x=element_blank(),
-        axis.ticks.x=element_blank())
+        legend.position = "none")#,
+#        axis.title.x=element_blank(),
+#        axis.text.x=element_blank(),
+#        axis.ticks.x=element_blank())
 #problems_plot
 ```
 
@@ -167,7 +166,7 @@ mapped_sams <- split_param(params$mapped_sam)
 source_reads_ums <- params$unmut_sam
 source_reads_mts <- params$mut_sam
 for( i in seq(length(mapped_sams))){
-  current_scenario = scenarios[i]
+  current_scenario = gsub("_all_replicates.tsv","",gsub("scenario_","",assessments[[i]]))#scenarios[i]
   current_mapped = mapped_sams[i]
   current_um_reads = source_reads_ums
   current_mt_reads = source_reads_mts
@@ -224,11 +223,15 @@ for( i in seq(length(mapped_sams))){
     ggplot(aes(x=window*params$window_size, y=values*100, color=label)) +
     geom_line() + 
     theme_bw() +
-    labs(y="Contaminantion Pct",x="Nt position") +
+    labs(y="Pct off target mapping") +
     xlim(0,genome_len) +
     ylim(0,100) +
     #scale_color_discrete_qualitative(palette = "Dark 3") +
-    theme(text=element_text(family="Helvetica",size=12))
+    theme(text=element_text(family="Helvetica",size=12),
+            axis.title.x=element_blank(),
+            axis.text.x=element_blank(),
+            axis.ticks.x=element_blank(),
+            legend.position="none")
   detection_plot <- vcr_summ %>%
     filter(scenario == current_scenario) %>%
     ggplot(aes(x=window*params$window_size, y=recall_pct, color=n)) +
@@ -249,6 +252,7 @@ for( i in seq(length(mapped_sams))){
   print(main_plot)
 }
 ```
+
 ## Regions with low recall ability or low precision
 
 ```{r}
@@ -277,6 +281,8 @@ kbl(
 ```
 
 ## Duplicated genes
+
+
 ```{r}
 kbl(
   duplicates %>%

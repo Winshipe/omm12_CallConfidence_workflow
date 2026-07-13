@@ -170,7 +170,6 @@ rule generate_report:
             input       = '{input.rmd}',
             output_file = file.path('"""+os.getcwd()+"""', '{output.html}'),
             params      = list(
-              scenario        = '{wildcards.scenario}',
               workingdir      = '""" + os.getcwd() + """',
               ref_id          = '{wildcards.ref_id}',
               assessment_tsvs = '{params.assessment_tsvs}',

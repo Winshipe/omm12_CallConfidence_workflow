@@ -10,7 +10,7 @@ Snakemake injects:
   snakemake.input.ref
   snakemake.output.mutated_fasta
   snakemake.output.mutations_tsv
-  snakemake.params.{model, rate, kappa, gc_freq, seed}
+  snakemake.params.{model, rate, kappa, gc_freq }
   snakemake.log[0]
 """
 
@@ -147,7 +147,7 @@ def mutate_sequence(seq, model, rate, kappa, gc_freq, rng):
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
-    rng = random.Random(snakemake.params.seed)
+    rng = random.Random()#snakemake.params.seed)
 
     model    = snakemake.params.model
     rate     = float(snakemake.params.rate)

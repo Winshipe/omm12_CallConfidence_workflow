@@ -100,14 +100,15 @@ def prepare_seqtk_sampling_script(wildcards):
     output = ""#"conda activate workflow/envs/seqtk.yaml;\n"
     template = "seqtk sample -s 42 results/simulated/{ref_id}/{replicate}/{mut_or_ref}/{ref_id}_R{p}.fastq.gz {fract} >> results/blended/{scenario}/{replicate}/{scenario}_R{p}.fastq;\n"
     for ref_id, ra in rel_abs_dict.items():
-        mut_fraction = ra * maf_abs_dict[ref_id]/sum_abundances #relative abundance * mutant fraction
-        ref_fraction = ra * (1 - maf_abs_dict[ref_id])/sum_abundances
+        mut_fraction = ra * maf_abs_dict[ref_id]/sum_abundances*len(rel_abs_dict) #relative abundance * mutant fraction
+        ref_fraction = ra * (1 - maf_abs_dict[ref_id])/sum_abundances*len(rel_abs_dict)
         for p in [1,2]:
             for mr in ["mutated","unmutated"]:
                 output += template.format(ref_id=ref_id, replicate=wildcards.replicate, mut_or_ref=mr, p=p, fract=mut_fraction if mr == "mutated" else ref_fraction, scenario=wildcards.scenario)
     output += "gzip results/blended/{scenario}/{replicate}/{scenario}_R1.fastq;\n".format(scenario=wildcards.scenario, replicate=wildcards.replicate)
     output += "gzip results/blended/{scenario}/{replicate}/{scenario}_R2.fastq;\n".format(scenario=wildcards.scenario, replicate=wildcards.replicate)
-
+    with open("logs/blend/"+wildcards.scenario+"/"+wildcards.replicate+".log","a") as f:
+        f.write(output)
     return output
 rule blend_reads:
     input:
