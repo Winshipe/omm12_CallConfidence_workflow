@@ -58,7 +58,7 @@ ground_truth = pd.concat([pd.read_csv(path,sep="\t") for path in snakemake.input
 log.info(f"Loaded {ground_truth.shape[0]} expected mutations from {snakemake.input.ground_truth}")
 ground_truth.columns = ["CHROM","POS","REF","ALT","mutation_type"] # rename columns to match the VCF names
 
-found_variants = found_variants[(found_variants["QUAL"] >= snakemake.params.min_quality) & (found_variants["CHROM"] == ground_truth.CHROM[0])]
+found_variants = found_variants[(found_variants["QUAL"] >= snakemake.params.min_quality)]
 log.info(f"Parsed {found_variants.shape[0]} SNP calls from {snakemake.input.vcf}")
 
 #here we do an outer join which preserves values in both the left and right tables and add an indicator column

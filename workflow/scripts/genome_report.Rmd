@@ -50,6 +50,20 @@ split_param <- function(x) {
 }
 ```
 
+```{r load_gff}
+gene_start_stops <- read_delim(
+  params$gff,
+  comment="#",
+  delim="\t",
+  col_names = c("chrom","source","type","gstart","gend","score","strand","phase","attributes")
+  ) %>%
+  mutate(
+    id_ = grep("(?:ID=[0-9]_)[0-9]+(?:;)", attributes),
+    query = paste0(chrom,"_",id_)
+    ) %>% 
+  select(chrom, query, gstart, gend)
+```
+
 ```{r load variant calling}
 vcr_names <- c("CHROM","POS","REF","ALT","Truthiness","scenario")
 variant_calling_results <- data.frame(matrix(ncol = length(vcr_names), nrow = 0))
@@ -63,6 +77,8 @@ for(i in seq(length(scenarios))){
   temp$scenario = scenarios[[i]]
   variant_calling_results <- rbind(variant_calling_results, temp)
 }
+
+variant_calling_results <- variant_calling_results %>% filter(CHROM == gene_stop_starts$chrom[1])
 
 genome_len = ifelse(params$genome_length == 0, max(variant_calling_results$POS), params$genome_length)
 #variant_calling_results <- variant_calling_results %>% filter(ref_id == sub(" ","_",params$ref_id))
@@ -85,19 +101,6 @@ for(i in seq(length(db_names))){
 duplicates <- read_delim(params$challenging_tsv,comment = "#", col_names = c("chrom","start","stop","name","score","strand"))
 ```
 
-```{r}
-gene_start_stops <- read_delim(
-  params$gff,
-  comment="#",
-  delim="\t",
-  col_names = c("chrom","source","type","gstart","gend","score","strand","phase","attributes")
-  ) %>%
-  mutate(
-    id_ = grep("(?:ID=[0-9]_)[0-9]+(?:;)", attributes),
-    query = paste0(chrom,"_",id_)
-    ) %>% 
-  select(chrom, query, gstart, gend)
-```
 
 ```{r}
 me_hits <- left_join(
