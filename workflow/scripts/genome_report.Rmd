@@ -78,7 +78,7 @@ for(i in seq(length(scenarios))){
   variant_calling_results <- rbind(variant_calling_results, temp)
 }
 
-variant_calling_results <- variant_calling_results %>% filter(CHROM == gene_stop_starts$chrom[1])
+variant_calling_results <- variant_calling_results %>% filter(CHROM == gene_start_stops$chrom[1])
 
 genome_len = ifelse(params$genome_length == 0, max(variant_calling_results$POS), params$genome_length)
 #variant_calling_results <- variant_calling_results %>% filter(ref_id == sub(" ","_",params$ref_id))

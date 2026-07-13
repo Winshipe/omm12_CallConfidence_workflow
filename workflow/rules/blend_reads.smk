@@ -65,27 +65,57 @@ def replicate_seed(wildcards):
     return base + index
 
 
-rule blend_reads:
-    """
-    Randomly subsample and interleave reads from each reference contribution
-    to produce a FASTQ pair for a given scenario and replicate.
+#rule blend_reads:
+#    """
+#    Randomly subsample and interleave reads from each reference contribution
+#    to produce a FASTQ pair for a given scenario and replicate.
+#
+#    The total number of read pairs written is config["blend_total_reads"].
+#    Reads are shuffled after blending so they are not ordered by source
+#    reference or mutation status.
+#    """
+#    input:
+#        unpack(scenario_input_reads),
+#    output:
+#        r1="results/blended/{scenario}/{replicate}/{scenario}_R1.fastq.gz",
+#        r2="results/blended/{scenario}/{replicate}/{scenario}_R2.fastq.gz",
+#    params:
+#        scenario_cfg = lambda wc: config["scenarios"][wc.scenario],
+#        #total_reads  = config["blend_total_reads"],
+#        seed         = replicate_seed,
+#    log:
+#        "logs/blend/{scenario}/{replicate}.log",
+#    conda:
+#        "../envs/python.yaml"
+#    script:
+#        "../scripts/blend_reads.py"
 
-    The total number of read pairs written is config["blend_total_reads"].
-    Reads are shuffled after blending so they are not ordered by source
-    reference or mutation status.
-    """
+def prepare_seqtk_sampling_script(wildcards):
+    rel_abs_dict = dict()
+    maf_abs_dict = dict()
+    for genome_cfg in config["scenarios"][wildcards.scenario]:
+        rel_abs_dict[genome_cfg["ref_id"]] = float(genome_cfg["abundance"])
+        maf_abs_dict[genome_cfg["ref_id"]] = float(genome_cfg["mutated_fraction"])
+    sum_abundances = sum(rel_abs_dict.values())
+    output = ""
+    template = "seqtk sample -s 42 results/simulated/{{ref_id}}/{{replicate}}/{{mut_or_ref}}/{{ref_id}}_R{{p}}.fastq.gz {{fract}} >> results/blended/{{scenario}}/{{replicate}}/{{scenario}}_R{{p}}.fastq"
+    for ref_id, ra in rel_abs_dict.items():
+        mut_fraction = ra * maf_abs_dict[ref_id] #relative abundance * mutant fraction
+        ref_fraction = ra * (1 - maf_abs_dict[ref_id])
+        for p in [1,2]:
+            for mr in ["mutated","unmutated"]:
+                output += temp.format(ref_id=ref_id, replicate=wildcards.replicate, mut_or_ref=mr, p=p, fract=mut_fraction if mr == "mutated" else ref_fraction, scenario=wildcards.scenario)
+    output += "gzip results/blended/{{scenario}}/{{replicate}}/{{scenario}}_R1.fastq".format(scenario=wildcards.scenario, replicate=wildcards.replicate)
+    output += "gzip results/blended/{{scenario}}/{{replicate}}/{{scenario}}_R2.fastq".format(scenario=wildcards.scenario, replicate=wildcards.replicate)
+
+    return output
+rule blend_reads:
     input:
-        unpack(scenario_input_reads),
+        unpack(scenario_input_reads)
     output:
         r1="results/blended/{scenario}/{replicate}/{scenario}_R1.fastq.gz",
         r2="results/blended/{scenario}/{replicate}/{scenario}_R2.fastq.gz",
-    params:
-        scenario_cfg = lambda wc: config["scenarios"][wc.scenario],
-        #total_reads  = config["blend_total_reads"],
-        seed         = replicate_seed,
-    log:
-        "logs/blend/{scenario}/{replicate}.log",
     conda:
-        "../envs/python.yaml"
-    script:
-        "../scripts/blend_reads.py"
+        "../envs/seqtk.yaml"
+    run:
+        shell(prepare_seqtk_sampling_script(wildcards))
