@@ -230,8 +230,10 @@ for( i in seq(length(mapped_sams))){
     theme(text=element_text(family="Helvetica",size=12),
             axis.title.x=element_blank(),
             axis.text.x=element_blank(),
-            axis.ticks.x=element_blank(),
-            legend.position="none")
+            axis.ticks.x=element_blank())
+  if(max((mapped_reads_sum %>% filter(label == "Other genome"))$values,na.rm=T) < 0.1){
+     xmap_plot <- xmap_plot + theme(legend.position="none")
+  }
   detection_plot <- vcr_summ %>%
     filter(scenario == current_scenario) %>%
     ggplot(aes(x=window*params$window_size, y=recall_pct, color=n)) +

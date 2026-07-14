@@ -151,6 +151,8 @@ rule generate_report:
         "logs/report/{ref_id}_report.log",
     conda:
         "../envs/r_report.yaml"
+    shadow:
+        "shallow"
     shell:
         # Render the R Markdown document from the command line using Rscript.
         #

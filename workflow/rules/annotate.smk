@@ -212,70 +212,14 @@ rule find_homologs:
         # Two-column cluster file: representative<TAB>member
         clusters="results/annotation/clusters.txt",
         # Nucleotide FASTAs for all references (headers carry coordinate info)
-        fa_files=expand(
-            "results/annotation/{ref_id}/{ref_id}.fna",
-            ref_id=list(config["references"].keys()),
-        ),
+        fa_files = "results/annotation/{ref_id}/{ref_id}.fna",
+#        fa_files=expand(
+#            "results/annotation/{ref_id}/{ref_id}.fna",
+#            ref_id=list(config["references"].keys()),
+#        ),
     output:
         ref_hits="results/annotation/{ref_id}/{ref_id}.challenging.tsv",
     script:
         "../scripts/find_homologs.py"
 
 
-# ---------------------------------------------------------------------------
-# Commented-out alternative rules (kept for reference)
-# ---------------------------------------------------------------------------
-
-# rule mmseqs_createdb_query:
-#     """Convert each reference FASTA into an MMseqs2 query database."""
-#     input:
-#         ref=get_ref_fasta,
-#     output:
-#         db=directory("results/annotation/{ref_id}/mmseqs_query_db"),
-#     log:
-#         "logs/annotation/{ref_id}.createdb.log",
-#     conda:
-#         "../envs/mmseqs2.yaml"
-#     shell:
-#         "mmseqs createdb {input.ref} {output.db}/queryDB &> {log}"
-
-
-# rule mmseqs_search_explicit:
-#     """
-#     Search the reference against every configured repeat/TE database.
-#     Results are merged into a single m8-format hit table.
-#     """
-#     input:
-#         query_db=rules.mmseqs_createdb_query.output.db,
-#     output:
-#         hits="results/annotation/{ref_id}/{ref_id}.repeat_hits.tsv",
-#     params:
-#         databases=config["annotation"]["mmseqs_databases"],
-#         sensitivity=config["annotation"]["mmseqs_sensitivity"],
-#         evalue=config["annotation"]["mmseqs_evalue"],
-#         tmp=lambda wc: f"results/annotation/{wc.ref_id}/mmseqs_tmp",
-#     threads:
-#         config["annotation"]["threads"]
-#     log:
-#         "logs/annotation/{ref_id}.search.log",
-#     conda:
-#         "../envs/mmseqs2.yaml"
-#     script:
-#         "../scripts/mmseqs_search.py"
-
-
-# rule annotate_repeats:
-#     """
-#     Post-process raw MMseqs2 hits into a tidy annotation TSV with columns:
-#     ref_id, start, end, strand, element_name, database, evalue, score.
-#     """
-#     input:
-#         hits=rules.mmseqs_search_explicit.output.hits,
-#     output:
-#         tsv="results/annotation/{ref_id}/{ref_id}.repeats.tsv",
-#     log:
-#         "logs/annotation/{ref_id}.annotate.log",
-#     conda:
-#         "../envs/python.yaml"
-#     script:
-#         "../scripts/annotate_repeats.py"
