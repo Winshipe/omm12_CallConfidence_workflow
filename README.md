@@ -1,11 +1,11 @@
 # CallConfidence - Variant-Calling Benchmarking Pipeline
 
 A modular Snakemake workflow for benchmarking variant callers on simulated
-metagenomic reads from mixed, mutated reference sequences.
+metagenomic reads from mixed, mutated reference sequences.  An example report for OMM12 is available as individual htmls and as a pdf under `OMM12_results`
 
 ---
 
-## Overview
+## Workflow Overview
 
 ```
 references (FASTA)
