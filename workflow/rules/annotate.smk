@@ -219,6 +219,8 @@ rule find_homologs:
 #        ),
     output:
         ref_hits="results/annotation/{ref_id}/{ref_id}.challenging.tsv",
+    conda:
+        "../envs/python.yaml"
     script:
         "../scripts/find_homologs.py"
 
