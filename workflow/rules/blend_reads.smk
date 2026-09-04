@@ -29,7 +29,7 @@ Output
   results/blended/{scenario}/{replicate}/{scenario}_R1.fastq.gz
   results/blended/{scenario}/{replicate}/{scenario}_R2.fastq.gz
 """
-
+import pathlib
 
 def scenario_input_reads(wildcards):
     """
@@ -82,7 +82,8 @@ def prepare_seqtk_sampling_script(wildcards):
                 output += template.format(ref_id=ref_id, replicate=wildcards.replicate, mut_or_ref=mr, p=p, fract=mut_fraction if mr == "mutated" else ref_fraction, scenario=wildcards.scenario)
     output += "gzip results/blended/{scenario}/{replicate}/{scenario}_R1.fastq;\n".format(scenario=wildcards.scenario, replicate=wildcards.replicate)
     output += "gzip results/blended/{scenario}/{replicate}/{scenario}_R2.fastq;\n".format(scenario=wildcards.scenario, replicate=wildcards.replicate)
-    with open("logs/blend/"+wildcards.scenario+"/"+wildcards.replicate+".log","a") as f:
+    pathlib.Path("logs/blend/"+wildcards.scenario).mkdir(parents=True, exist_ok=True)
+    with open("logs/blend/"+wildcards.scenario+"/"+wildcards.replicate+".log","w") as f:
         f.write(output)
     return output
 rule blend_reads:
@@ -92,7 +93,7 @@ rule blend_reads:
         r1="results/blended/{scenario}/{replicate}/{scenario}_R1.fastq.gz",
         r2="results/blended/{scenario}/{replicate}/{scenario}_R2.fastq.gz",
     log:
-        "logs/blend/{scenario}/{replicate}.log",
+        "logs/blend/{scenario}/{replicate}.blend.log",
     conda:
         "../envs/seqtk.yaml"
     params:
