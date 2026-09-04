@@ -32,7 +32,7 @@ mutation:
 annotation:
   mmseqs_databases: 
     mobileOG:
-      "resources/mmseqs/mobileOG"
+      "resources/this_is_a_placeholder" # please replace this with the path to your mmseqs databases
   split_mem_limit: "164G"
   max_memory: "196G"
   threads: 8
