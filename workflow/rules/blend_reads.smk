@@ -65,31 +65,6 @@ def replicate_seed(wildcards):
     return base + index
 
 
-#rule blend_reads:
-#    """
-#    Randomly subsample and interleave reads from each reference contribution
-#    to produce a FASTQ pair for a given scenario and replicate.
-#
-#    The total number of read pairs written is config["blend_total_reads"].
-#    Reads are shuffled after blending so they are not ordered by source
-#    reference or mutation status.
-#    """
-#    input:
-#        unpack(scenario_input_reads),
-#    output:
-#        r1="results/blended/{scenario}/{replicate}/{scenario}_R1.fastq.gz",
-#        r2="results/blended/{scenario}/{replicate}/{scenario}_R2.fastq.gz",
-#    params:
-#        scenario_cfg = lambda wc: config["scenarios"][wc.scenario],
-#        #total_reads  = config["blend_total_reads"],
-#        seed         = replicate_seed,
-#    log:
-#        "logs/blend/{scenario}/{replicate}.log",
-#    conda:
-#        "../envs/python.yaml"
-#    script:
-#        "../scripts/blend_reads.py"
-
 def prepare_seqtk_sampling_script(wildcards):
     rel_abs_dict = dict()
     maf_abs_dict = dict()
@@ -116,12 +91,8 @@ rule blend_reads:
     output:
         r1="results/blended/{scenario}/{replicate}/{scenario}_R1.fastq.gz",
         r2="results/blended/{scenario}/{replicate}/{scenario}_R2.fastq.gz",
-    #run:
-    #    shell_script = prepare_seqtk_sampling_script(wildcards)
-    #    print(shell_script)
-    #    with open("logs/blend/"+wildcards.scenario+"/"+wildcards.replicate+".log","a") as f:
-    #        f.write(shell_script)
-    #    shell(shell_script)
+    log:
+        "logs/blend/{scenario}/{replicate}.log",
     conda:
         "../envs/seqtk.yaml"
     params:
