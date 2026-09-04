@@ -1,0 +1,7 @@
+name: snakemake_prodigal
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - prodigal
