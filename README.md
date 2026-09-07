@@ -199,3 +199,8 @@ ref_id  seq_id  position  ref_base  alt_base  mutation_type
 detected  vcf_alt  vcf_freq  vcf_quality  above_threshold
 detected  vcf_alt  vcf_freq  vcf_quality  above_threshold
 ```
+
+## Testing 
+
+The snakemake workflow itself without any outside programs or scripts can be tested by running it with the `-n` or `--dry-run` flags
+The python scripts can be tested by running `python test/test_pipeline.py -v`
