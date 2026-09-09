@@ -34,7 +34,7 @@ references (FASTA)
 ### 1. Install Snakemake
 
 ```bash
-conda create -n snakemake -c conda-forge -c bioconda snakemake>=7
+conda create -n snakemake -c conda-forge -c bioconda snakemake>=8.23
 conda activate snakemake
 ```
 
