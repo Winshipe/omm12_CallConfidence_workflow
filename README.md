@@ -75,6 +75,8 @@ snakemake --snakefile workflow/Snakefile \
 
 On a cluster with SLURM:
 
+(you will also need to install the SLURM executor plugin for snakemake, please see snakemake's documentation on the subject)
+
 ```bash
 snakemake --snakefile workflow/Snakefile \
           --configfile config/config.yaml \
