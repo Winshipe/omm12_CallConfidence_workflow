@@ -83,7 +83,8 @@ snakemake --snakefile workflow/Snakefile \
           --use-conda \
           --executor slurm \
           --jobs 50 \
-          # --default-resources runtime=240 mem_mb=8000 # example only, please specify your own profile or default resources as required for your cluster's configuration
+          # --default-resources runtime=240 mem_mb=8000 # example only
+          # please specify your own profile or default resources as required for your cluster's configuration
 ```
 
 ---
