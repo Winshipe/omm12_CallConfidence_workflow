@@ -31,6 +31,10 @@ references (FASTA)
 
 ## Quick start
 
+### 0. Install Conda 
+
+Follow the instructions at https://www.anaconda.com/download 
+
 ### 1. Install Snakemake
 
 ```bash
