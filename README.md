@@ -33,7 +33,6 @@ references (FASTA)
 
 This workflow is intended for Mac and Linux machines and the documentation assumes a basic proficiency in the command line
 
-
 ### 0. Install Conda 
 
 Follow the instructions at https://www.anaconda.com/download 
