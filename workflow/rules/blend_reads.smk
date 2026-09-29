@@ -71,12 +71,15 @@ def prepare_seqtk_sampling_script(wildcards):
     for genome_cfg in config["scenarios"][wildcards.scenario]:
         rel_abs_dict[genome_cfg["ref_id"]] = float(genome_cfg["abundance"])
         maf_abs_dict[genome_cfg["ref_id"]] = float(genome_cfg["mutated_fraction"])
-    sum_abundances = sum(rel_abs_dict.values())
+    # Scale by the largest abundance so the most abundant reference keeps all
+    # of its reads and every fraction stays within [0, 1] (seqtk treats a
+    # value > 1 as an absolute read COUNT, not a fraction)
+    max_abundance = max(rel_abs_dict.values())
     output = ""#"conda activate workflow/envs/seqtk.yaml;\n"
     template = "seqtk sample -s 42 results/simulated/{ref_id}/{replicate}/{mut_or_ref}/{ref_id}_R{p}.fastq.gz {fract} >> results/blended/{scenario}/{replicate}/{scenario}_R{p}.fastq;\n"
     for ref_id, ra in rel_abs_dict.items():
-        mut_fraction = ra * maf_abs_dict[ref_id]/sum_abundances*len(rel_abs_dict) #relative abundance * mutant fraction
-        ref_fraction = ra * (1 - maf_abs_dict[ref_id])/sum_abundances*len(rel_abs_dict)
+        mut_fraction = ra / max_abundance * maf_abs_dict[ref_id] #relative abundance * mutant fraction
+        ref_fraction = ra / max_abundance * (1 - maf_abs_dict[ref_id])
         for p in [1,2]:
             for mr in ["mutated","unmutated"]:
                 output += template.format(ref_id=ref_id, replicate=wildcards.replicate, mut_or_ref=mr, p=p, fract=mut_fraction if mr == "mutated" else ref_fraction, scenario=wildcards.scenario)

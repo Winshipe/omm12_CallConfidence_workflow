@@ -288,13 +288,13 @@ rule gatk_haplotype_caller:
 #        tbi="results/variant_calling/{scenario}/{replicate}/output.vcf.gz.tbi",
     params:
         min_base_quality=config["variant_calling"].get("min_base_quality", 20),
-        ploidy          =config["variant_calling"].get("ploidy", 2),
+        ploidy          =config["variant_calling"].get("ploidy", 1),
         extra           =config["variant_calling"].get("gatk_extra_flags", ""),
     threads:
         config["variant_calling"]["threads"]
     resources:
         # GATK's default Java heap is 4 GB; scale with thread count
-        mem_mb=lambda wc, threads: max(8000, threads * 1500),
+        mem_mb= config["variant_calling"].get("mem_mb",lambda wc, threads: max(8000, threads * 1500)),
     log:
         "logs/variant_calling/{scenario}/{replicate}.gatk.log",
     conda:

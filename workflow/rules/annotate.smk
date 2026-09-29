@@ -130,9 +130,9 @@ rule mmseqs_search:
     shell:
         """
         dbpath={input.db_path}
-        if [[ dbpath == *.f*a ]]; then
-            dbpath_temp="${{filename%.*}}"
-            mmseqs createdb $dbpath $dbpath_temp
+        if [[ $dbpath == *.f*a ]]; then
+            dbpath_temp="${{dbpath%.*}}"
+            mmseqs createdb $dbpath $dbpath_temp > {log} 2>&1
             dbpath=$dbpath_temp
         fi
         mmseqs easy-search \
@@ -141,8 +141,7 @@ rule mmseqs_search:
             {input.query} \
             $dbpath \
             {output.hits} \
-            /tmp/$SLURM_JOB_ID
-            &> {log}
+            /tmp/${{SLURM_JOB_ID:-$$}} >> {log} 2>&1
 
         """
 

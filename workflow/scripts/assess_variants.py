@@ -16,7 +16,6 @@ Output columns
   position        — 1-based genomic position of the expected mutation
   ref_base        — expected reference allele
   alt_base        — expected alternative allele
-  mutation_type   — transition | transversion
   detected        — True | False — was any variant called at this position?
   vcf_alt         — the ALT allele reported by breseq (or "." if not called)
   vcf_freq        — allele frequency from the VCF INFO/FORMAT field (or ".")
@@ -52,11 +51,14 @@ found_variants = pd.read_csv(
     comment="#",\
     names = ['CHROM', 'POS', 'ID', 'REF', 'ALT', 'QUAL', 'FILTER', 'INFO', 'FORMAT', 'scenario']\
 )
-
-#read the tsv containing the ground truth
-ground_truth = pd.concat([pd.read_csv(path,sep="\t") for path in snakemake.input.ground_truth])
-log.info(f"Loaded {ground_truth.shape[0]} expected mutations from {snakemake.input.ground_truth}")
-ground_truth.columns = ["CHROM","POS","REF","ALT","mutation_type"] # rename columns to match the VCF names
+try:
+    #read the tsv containing the ground truth
+    ground_truth = pd.concat([pd.read_csv(path,sep="\t") for path in snakemake.input.ground_truth])
+    ground_truth.columns = ["CHROM","POS","REF","ALT"] # rename columns to match the VCF names
+    log.info(f"Loaded {ground_truth.shape[0]} expected mutations from {snakemake.input.ground_truth}")
+except ValueError:
+    ground_truth = pd.DataFrame(columns=["CHROM","POS","REF","ALT"])
+    log.info("No ground truth mutations found")
 
 found_variants = found_variants[(found_variants["QUAL"] >= snakemake.params.min_quality)]
 log.info(f"Parsed {found_variants.shape[0]} SNP calls from {snakemake.input.vcf}")

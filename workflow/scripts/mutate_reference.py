@@ -147,7 +147,7 @@ def mutate_sequence(seq, model, rate, kappa, gc_freq, rng):
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
-    rng = random.Random()#snakemake.params.seed)
+    rng = random.Random(snakemake.params.seed)
 
     model    = snakemake.params.model
     rate     = float(snakemake.params.rate)
@@ -176,7 +176,7 @@ def main():
 
     # Write TSV
     with open(snakemake.output.mutations_tsv, "w") as fh:
-        fh.write("seq_id\tposition\tref_base\talt_base\tmutation_type\n")
+        fh.write("seq_id\tposition\tref_base\talt_base\n")#tmutation_type\n")
         for m in all_mutations:
             fh.write(
                 f"{m['seq_id']}\t{m['position']}\t{m['ref_base']}\t"

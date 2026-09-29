@@ -71,7 +71,7 @@ variant_calling:
   threads: 8          # CPU threads for BWA-MEM and GATK HaplotypeCaller
   mem_mb: 16000       # RAM allocated to GATK steps in megabytes (16 GB is
                       # sufficient for most bacterial genome projects)
-  min_base_quality_score: 20  # Ignore bases whose Phred quality score is below
+  min_base_quality: 20  # Ignore bases whose Phred quality score is below
                               # this value (20 = 99% base-call accuracy).
                               # Raising this makes calls more conservative.
   gatk_extra_flags: ""        # Any additional flags to pass to HaplotypeCaller.

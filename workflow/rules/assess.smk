@@ -156,21 +156,19 @@ rule aggregate_replicates:
                 with open(tsv_path, newline="") as in_fh:
                     reader = csv.DictReader(in_fh, delimiter="\t")
 
+                    if writer is None and reader.fieldnames:
+                        # Initialise the writer from the first file's header
+                        # (not its first row), so the output keeps a header
+                        # even when every replicate has zero rows.  The
+                        # replicate column is already written upstream.
+                        writer = csv.DictWriter(
+                            out_fh,
+                            fieldnames=list(reader.fieldnames),
+                            delimiter="\t",
+                        )
+                        writer.writeheader()
+
                     for row in reader:
-                        # Attach the replicate label to every row
-                        row["replicate"] = rep_label
-
-                        if writer is None:
-                            # Initialise writer with the fieldnames from the
-                            # first file, plus the new 'replicate' column
-                            fieldnames = list(reader.fieldnames) + ["replicate"]
-                            writer = csv.DictWriter(
-                                out_fh,
-                                fieldnames=fieldnames,
-                                delimiter="\t",
-                            )
-                            writer.writeheader()
-
                         writer.writerow(row)
                         total_rows += 1
 
