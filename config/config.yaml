@@ -43,7 +43,7 @@ simulation:
   read_length: 150
   mean_fragment_length: 400
   std_fragment_length: 100
-  coverage: 50                 # fold coverage per reference per replicate
+  coverage: 100                 # fold coverage per reference per replicate
   # Optional: supply real reads to learn a custom sequencing error profile.
   # Leave as null to use ART's built-in MiSeq (MSv3) profile.
   empirical_reads_R1: null     # e.g. "resources/empirical/real_R1.fastq.gz"
@@ -75,6 +75,10 @@ variant_calling:
                               # this value (20 = 99% base-call accuracy).
                               # Raising this makes calls more conservative.
   gatk_extra_flags: ""        # Any additional flags to pass to HaplotypeCaller.
+  leftalign_extra_flags: ""   # Extra flags for GATK LeftAlignAndTrimVariants, which
+                              # normalises the calls before assessment, e.g.
+                              # "--split-multi-allelics" to split multi-allelic
+                              # records into one record per ALT allele.
 
 # ── Assessment ───────────────────────────────────────────────────────────────
 assessment:

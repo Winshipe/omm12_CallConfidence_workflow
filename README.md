@@ -31,10 +31,16 @@ references (FASTA)
 
 ## Quick start
 
+This workflow is intended for Mac and Linux machines and the documentation assumes a basic proficiency in the command line
+
+### 0. Install Conda 
+
+Follow the instructions at https://www.anaconda.com/download 
+
 ### 1. Install Snakemake
 
 ```bash
-conda create -n snakemake -c conda-forge -c bioconda snakemake>=7
+conda create -n snakemake -c conda-forge -c bioconda snakemake>=8.23
 conda activate snakemake
 ```
 
@@ -71,13 +77,16 @@ snakemake --snakefile workflow/Snakefile \
 
 On a cluster with SLURM:
 
+(you will also need to install the SLURM executor plugin for snakemake, please see snakemake's documentation on the subject)
+
 ```bash
 snakemake --snakefile workflow/Snakefile \
           --configfile config/config.yaml \
           --use-conda \
           --executor slurm \
           --jobs 50 \
-          --default-resources slurm_partition=standard mem_mb=8000
+          # --default-resources runtime=240 mem_mb=8000 account=my_project_placeholder # example only
+          # please specify your own profile or default resources as required for your cluster's configuration
 ```
 
 ---
@@ -199,3 +208,11 @@ ref_id  seq_id  position  ref_base  alt_base  mutation_type
 detected  vcf_alt  vcf_freq  vcf_quality  above_threshold
 detected  vcf_alt  vcf_freq  vcf_quality  above_threshold
 ```
+
+## Testing 
+
+The snakemake workflow itself without any outside programs or scripts can be tested by running it with the `-n` or `--dry-run` flags
+The python scripts can be tested by running `python test/test_pipeline.py -v`
+
+## AI usage
+Claude and MS Copilot were used to reformat and restructure the existing pipeline and associated scripts and they were also used to generate a test suite 

@@ -17,7 +17,12 @@ Overview of steps
                        and mark duplicate read pairs with samtools.
 
 3. gatk_haplotype_caller — call variants with GATK HaplotypeCaller in
-                           EMIT_ALL_SITES or standard mode, producing a VCF.
+                           EMIT_ALL_SITES or standard mode, producing a raw VCF.
+
+4. gatk_left_align_and_trim — normalise the raw calls with GATK
+                           LeftAlignAndTrimVariants (left-align indels, trim
+                           shared bases from REF/ALT) so each variant has one
+                           canonical representation before assessment.
 
 Why the unmutated reference?
 -----------------------------
@@ -35,8 +40,8 @@ special flags are needed.
 
 Output files (per scenario × replicate)
 ----------------------------------------
-  results/variant_calling/{scenario}/{replicate}/output.vcf.gz        final variant calls
-  results/variant_calling/{scenario}/{replicate}/output.vcf.gz.tbi    VCF index (tabix)
+  results/variant_calling/{scenario}/{replicate}/raw.vcf       HaplotypeCaller calls
+  results/variant_calling/{scenario}/{replicate}/output.vcf    left-aligned, trimmed final calls
   results/variant_calling/{scenario}/{replicate}/aligned.bam          sorted, deduplicated BAM
   results/variant_calling/{scenario}/{replicate}/aligned.bam.bai      BAM index
 
@@ -46,6 +51,9 @@ Configuration keys read from config["variant_calling"]
   bwa_extra_flags  : str   — optional extra flags passed to bwa mem
   gatk_extra_flags : str   — optional extra flags passed to HaplotypeCaller
   min_base_quality : int   — minimum base quality score for GATK (default 20)
+  leftalign_extra_flags : str — optional extra flags passed to
+                                LeftAlignAndTrimVariants (e.g.
+                                "--split-multi-allelics")
 """
 
 import os
@@ -283,12 +291,11 @@ rule gatk_haplotype_caller:
         fai =rules.bwa_index.output.fai,
         dic =rules.bwa_index.output.dic,
     output:
-           # results/variant_calling/scenario_equal_mix/rep1/output.vcf
-        vcf="results/variant_calling/{scenario}/{replicate}/output.vcf"#.gz",
-#        tbi="results/variant_calling/{scenario}/{replicate}/output.vcf.gz.tbi",
+        # Raw calls; normalised by gatk_left_align_and_trim into output.vcf
+        vcf="results/variant_calling/{scenario}/{replicate}/output.vcf",
     params:
         min_base_quality=config["variant_calling"].get("min_base_quality", 20),
-        ploidy          =config["variant_calling"].get("ploidy", 1),
+        ploidy          =config["variant_calling"].get("ploidy", 2), 
         extra           =config["variant_calling"].get("gatk_extra_flags", ""),
     threads:
         config["variant_calling"]["threads"]
@@ -308,6 +315,7 @@ rule gatk_haplotype_caller:
             --min-base-quality-score {params.min_base_quality} \
             --sample-ploidy          {params.ploidy} \
             --native-pair-hmm-threads {threads} \
+            -ERC GVCF
             {params.extra} \
             >> {log} 2>&1
 
@@ -315,3 +323,4 @@ rule gatk_haplotype_caller:
         # ends in .vcf.gz, but we declare it explicitly so Snakemake knows
         # it was produced and can use it as an input to downstream rules.
         """
+

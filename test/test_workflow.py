@@ -349,6 +349,10 @@ PY_PACKAGES = {"pandas": "pandas", "Bio": "biopython", "numpy": "numpy", "yaml":
 
 
 def test_python_script_imports_are_provided_by_rule_env():
+    stdlib = getattr(sys, "stdlib_module_names", None)
+    if stdlib is None:
+        from harness import SkipTest
+        raise SkipTest("needs Python 3.10+ (sys.stdlib_module_names)")
     for rule in real_workflow().rules.values():
         script, conda = rule.single("script"), rule.single("conda")
         if not script or not script.endswith(".py"):
@@ -360,7 +364,7 @@ def test_python_script_imports_are_provided_by_rule_env():
         mods = {n.names[0].name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import)}
         mods |= {n.module.split(".")[0] for n in ast.walk(tree)
                  if isinstance(n, ast.ImportFrom) and n.module}
-        third_party = {m for m in mods if m not in sys.stdlib_module_names}
+        third_party = {m for m in mods if m not in stdlib}
         for m in third_party:
             assert m in PY_PACKAGES, f"{script}: unknown third-party module {m!r}; add it to PY_PACKAGES"
             assert PY_PACKAGES[m] in pkgs, f"{rule.location}: {script} imports {m} but {conda} lacks {PY_PACKAGES[m]}"
@@ -411,7 +415,7 @@ def test_dag_builds_for_shipped_config():
     assert counts["mutate_reference"] == n_refs * reps
     assert counts["simulate_reads"] == n_refs * reps * 2
     for rule in ("blend_reads", "bwa_index", "bwa_align", "gatk_haplotype_caller",
-                 "assess_variants"):
+                 "gatk_left_align_and_trim", "assess_variants"):
         assert counts[rule] == n_scen * reps, (rule, counts)
     assert counts["aggregate_replicates"] == n_scen
     assert counts["generate_report"] == n_refs
@@ -435,6 +439,23 @@ def test_dag_builds_for_multi_reference_config_with_empirical_profile():
     assert counts["assess_variants"] == 6
     sim = next(j for j in jobs if j.rule.name == "simulate_reads")
     assert "results/art_profile/empirical_R1.txt" in sim.input
+
+
+def test_calls_are_left_aligned_and_trimmed_before_assessment():
+    """HaplotypeCaller → raw.vcf → LeftAlignAndTrimVariants → output.vcf →
+    assess_variants, with the normaliser using the same reference."""
+    jobs, _, _ = real_dag()
+    by_output = {p: j for j in jobs for p in j.output}
+    for assess in (j for j in jobs if j.rule.name == "assess_variants"):
+        norm = by_output[assess.input.vcf]
+        assert norm.rule.name == "gatk_left_align_and_trim", norm.rule.name
+        raw = by_output[norm.input.vcf]
+        assert raw.rule.name == "gatk_haplotype_caller", raw.rule.name
+        assert norm.input.vcf.endswith("/raw.vcf")
+        assert norm.input.ref == raw.input.ref
+        shell = smk.render_shell(norm)
+        assert "gatk LeftAlignAndTrimVariants" in shell
+        assert f"--variant   {norm.input.vcf}" in shell and f"--output    {assess.input.vcf}" in shell
 
 
 def test_every_job_output_is_unique():

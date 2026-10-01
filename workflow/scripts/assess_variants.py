@@ -51,6 +51,12 @@ found_variants = pd.read_csv(
     comment="#",\
     names = ['CHROM', 'POS', 'ID', 'REF', 'ALT', 'QUAL', 'FILTER', 'INFO', 'FORMAT', 'scenario']\
 )
+
+# in a gvcf every position is reported with <NON_REF> as a placeholder for the uncertainty, including rows where there are other alts (eg A,<NON_REF>)
+# QUAL is reported as "." where there's just <NON_REF> so here we split each alt on to their own row and then filter away <NON_REF> and the "." qualities
+found_variants = found_variants.set_index(['CHROM', 'POS', 'ID', 'REF', 'QUAL', 'FILTER', 'INFO', 'FORMAT', 'scenario'])["ALT"].str.split(",").explode().reset_index()
+found_variants = found_variants[found_variants["ALT"] != "<NON_REF>"]
+found_variants["QUAL"] = found_variants["QUAL"].astype("float") 
 try:
     #read the tsv containing the ground truth
     ground_truth = pd.concat([pd.read_csv(path,sep="\t") for path in snakemake.input.ground_truth])

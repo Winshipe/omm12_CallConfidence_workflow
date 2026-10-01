@@ -44,7 +44,7 @@ def _truth(path):
 
 
 class FakeCaller:
-    """Stands in for BWA+GATK: calls ~80 % of true variants with high QUAL,
+    """Stands in for BWA + GATK (HaplotypeCaller and LeftAlignAndTrimVariants): calls ~80 % of true variants with high QUAL,
     ~10 % with QUAL below threshold, misses the rest, adds 2 false positives."""
 
     def __init__(self, seed=0):
@@ -81,7 +81,9 @@ def _run_python_pipeline(td, cfg):
     with chdir(td):
         for job in by_rule["mutate_reference"]:
             run_job(job)
-        for job in by_rule["gatk_haplotype_caller"]:
+        # Stand-in for HaplotypeCaller + LeftAlignAndTrimVariants: write the
+        # normalised VCF that assess_variants reads
+        for job in by_rule["gatk_left_align_and_trim"]:
             truth = []
             scen = cfg["scenarios"][job.wildcards["scenario"]]
             for c in scen:
