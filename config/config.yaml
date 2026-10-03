@@ -75,10 +75,12 @@ variant_calling:
                               # this value (20 = 99% base-call accuracy).
                               # Raising this makes calls more conservative.
   gatk_extra_flags: ""        # Any additional flags to pass to HaplotypeCaller.
-  leftalign_extra_flags: ""   # Extra flags for GATK LeftAlignAndTrimVariants, which
-                              # normalises the calls before assessment, e.g.
-                              # "--split-multi-allelics" to split multi-allelic
-                              # records into one record per ALT allele.
+  caller: "haplotypecaller"   # Variant caller: "haplotypecaller" or "mutect2"
+                              # (Mutect2 tumor-only + FilterMutectCalls; models
+                              # each variant's allele fraction instead of a
+                              # fixed ploidy, which suits mixed samples).
+  mutect2_extra_flags: ""     # Any additional flags to pass to Mutect2.
+  filter_mutect_extra_flags: ""  # Any additional flags to pass to FilterMutectCalls.
 
 # ── Assessment ───────────────────────────────────────────────────────────────
 assessment:

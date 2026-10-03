@@ -16,13 +16,26 @@ Overview of steps
                        the (merged) reference with BWA-MEM, sort the result,
                        and mark duplicate read pairs with samtools.
 
-3. gatk_haplotype_caller — call variants with GATK HaplotypeCaller in
-                           EMIT_ALL_SITES or standard mode, producing a raw VCF.
+3. Variant calling, with the caller chosen by config["variant_calling"]["caller"]:
 
-4. gatk_left_align_and_trim — normalise the raw calls with GATK
-                           LeftAlignAndTrimVariants (left-align indels, trim
-                           shared bases from REF/ALT) so each variant has one
-                           canonical representation before assessment.
+   "haplotypecaller" (default)
+     gatk_haplotype_caller    — GATK HaplotypeCaller (GVCF mode) → haplotypecaller.vcf
+
+   "mutect2"
+     gatk_mutect2             — GATK Mutect2 in tumor-only mode → mutect2.unfiltered.vcf
+                                (+ the .stats file FilterMutectCalls needs)
+     gatk_filter_mutect_calls — GATK FilterMutectCalls → mutect2.filtered.vcf;
+                                failing calls keep a non-PASS FILTER value and
+                                are ignored by assess_variants.py
+
+   Mutect2 models each variant's allele fraction directly instead of a fixed
+   ploidy, so it suits the mixed (mutated + unmutated) samples simulated here,
+   where mutations sit at the scenario's mutated_fraction.
+
+4. select_variant_calls  — copy the selected caller's VCF to output.vcf, the
+                           file assessment reads.  Each caller keeps its own
+                           file, so switching caller does not overwrite the
+                           other caller's results.
 
 Why the unmutated reference?
 -----------------------------
@@ -40,8 +53,9 @@ special flags are needed.
 
 Output files (per scenario × replicate)
 ----------------------------------------
-  results/variant_calling/{scenario}/{replicate}/raw.vcf       HaplotypeCaller calls
-  results/variant_calling/{scenario}/{replicate}/output.vcf    left-aligned, trimmed final calls
+  results/variant_calling/{scenario}/{replicate}/haplotypecaller.vcf     HaplotypeCaller calls
+  results/variant_calling/{scenario}/{replicate}/mutect2.filtered.vcf    Mutect2 calls with FILTER set
+  results/variant_calling/{scenario}/{replicate}/output.vcf              selected caller's calls
   results/variant_calling/{scenario}/{replicate}/aligned.bam          sorted, deduplicated BAM
   results/variant_calling/{scenario}/{replicate}/aligned.bam.bai      BAM index
 
@@ -51,12 +65,35 @@ Configuration keys read from config["variant_calling"]
   bwa_extra_flags  : str   — optional extra flags passed to bwa mem
   gatk_extra_flags : str   — optional extra flags passed to HaplotypeCaller
   min_base_quality : int   — minimum base quality score for GATK (default 20)
-  leftalign_extra_flags : str — optional extra flags passed to
-                                LeftAlignAndTrimVariants (e.g.
-                                "--split-multi-allelics")
+  caller           : str   — "haplotypecaller" (default) or "mutect2"
+  mutect2_extra_flags       : str — optional extra flags passed to Mutect2
+  filter_mutect_extra_flags : str — optional extra flags passed to FilterMutectCalls
 """
 
 import os
+
+
+# ---------------------------------------------------------------------------
+# Variant caller selection
+# ---------------------------------------------------------------------------
+
+# VCF written by each supported caller (relative to the scenario/replicate dir)
+CALLER_VCF = {
+    "haplotypecaller": "haplotypecaller.vcf",
+    "mutect2":         "mutect2.filtered.vcf",
+}
+VARIANT_CALLER = str(config["variant_calling"].get("caller", "haplotypecaller")).lower()
+if VARIANT_CALLER not in CALLER_VCF:
+    raise ValueError(
+        f"config variant_calling.caller must be one of {sorted(CALLER_VCF)}, "
+        f"got {VARIANT_CALLER!r}"
+    )
+
+
+def selected_caller_vcf(wildcards):
+    """VCF produced by the configured caller for this scenario × replicate."""
+    return (f"results/variant_calling/{wildcards.scenario}/{wildcards.replicate}/"
+            f"{CALLER_VCF[VARIANT_CALLER]}")
 
 
 # ---------------------------------------------------------------------------
@@ -291,8 +328,8 @@ rule gatk_haplotype_caller:
         fai =rules.bwa_index.output.fai,
         dic =rules.bwa_index.output.dic,
     output:
-        # Raw calls; normalised by gatk_left_align_and_trim into output.vcf
-        vcf="results/variant_calling/{scenario}/{replicate}/output.vcf",
+        # Copied to output.vcf by select_variant_calls when this caller is selected
+        vcf="results/variant_calling/{scenario}/{replicate}/haplotypecaller.vcf",
     params:
         min_base_quality=config["variant_calling"].get("min_base_quality", 20),
         ploidy          =config["variant_calling"].get("ploidy", 2), 
@@ -315,7 +352,7 @@ rule gatk_haplotype_caller:
             --min-base-quality-score {params.min_base_quality} \
             --sample-ploidy          {params.ploidy} \
             --native-pair-hmm-threads {threads} \
-            -ERC GVCF
+            -ERC GVCF \
             {params.extra} \
             >> {log} 2>&1
 
@@ -324,3 +361,102 @@ rule gatk_haplotype_caller:
         # it was produced and can use it as an input to downstream rules.
         """
 
+
+# ---------------------------------------------------------------------------
+# Rule 3 (alternative) — call variants with GATK Mutect2 + FilterMutectCalls
+# ---------------------------------------------------------------------------
+
+rule gatk_mutect2:
+    """
+    Call somatic-style variants with GATK Mutect2 in tumor-only mode (no
+    matched normal): every read in the BAM belongs to the one sample.
+
+    Unlike HaplotypeCaller, Mutect2 does not assume a ploidy; it estimates
+    each variant's allele fraction, so low-fraction mutations in a mixed
+    sample can be called.  Mutect2 leaves QUAL as "." — call confidence is
+    expressed through FilterMutectCalls' FILTER column instead.
+
+    Mutect2 also writes <output>.stats, which FilterMutectCalls requires.
+    """
+    input:
+        bam =rules.bwa_align.output.bam,
+        bai =rules.bwa_align.output.bai,
+        ref =rules.bwa_index.output.ref,
+        fai =rules.bwa_index.output.fai,
+        dic =rules.bwa_index.output.dic,
+    output:
+        vcf  ="results/variant_calling/{scenario}/{replicate}/mutect2.unfiltered.vcf",
+        stats="results/variant_calling/{scenario}/{replicate}/mutect2.unfiltered.vcf.stats",
+    params:
+        min_base_quality=config["variant_calling"].get("min_base_quality", 20),
+        extra           =config["variant_calling"].get("mutect2_extra_flags", ""),
+    threads:
+        config["variant_calling"]["threads"]
+    resources:
+        mem_mb=config["variant_calling"].get("mem_mb", 8000),
+    log:
+        "logs/variant_calling/{scenario}/{replicate}.mutect2.log",
+    conda:
+        "../envs/bwa_gatk.yaml"
+    shell:
+        """
+        gatk Mutect2 \
+            --reference              {input.ref} \
+            --input                  {input.bam} \
+            --output                 {output.vcf} \
+            --min-base-quality-score {params.min_base_quality} \
+            --native-pair-hmm-threads {threads} \
+            {params.extra} \
+            >> {log} 2>&1
+        """
+
+
+rule gatk_filter_mutect_calls:
+    """
+    Apply GATK FilterMutectCalls to the Mutect2 calls.  Every call is kept in
+    the output; calls that fail a filter get the failing filter names in the
+    FILTER column instead of PASS, and assess_variants.py ignores them.
+    """
+    input:
+        vcf  =rules.gatk_mutect2.output.vcf,
+        stats=rules.gatk_mutect2.output.stats,
+        ref  =rules.bwa_index.output.ref,
+        fai  =rules.bwa_index.output.fai,
+        dic  =rules.bwa_index.output.dic,
+    output:
+        vcf="results/variant_calling/{scenario}/{replicate}/mutect2.filtered.vcf",
+    params:
+        extra=config["variant_calling"].get("filter_mutect_extra_flags", ""),
+    resources:
+        mem_mb=config["variant_calling"].get("mem_mb", 8000),
+    log:
+        "logs/variant_calling/{scenario}/{replicate}.filter_mutect.log",
+    conda:
+        "../envs/bwa_gatk.yaml"
+    shell:
+        """
+        gatk FilterMutectCalls \
+            --reference {input.ref} \
+            --variant   {input.vcf} \
+            --stats     {input.stats} \
+            --output    {output.vcf} \
+            {params.extra} \
+            >> {log} 2>&1
+        """
+
+
+# ---------------------------------------------------------------------------
+# Rule 4 — hand the selected caller's VCF to assessment
+# ---------------------------------------------------------------------------
+
+rule select_variant_calls:
+    """
+    Copy the VCF of the caller chosen in config["variant_calling"]["caller"]
+    to output.vcf, the file assess_variants reads.
+    """
+    input:
+        vcf=selected_caller_vcf,
+    output:
+        vcf="results/variant_calling/{scenario}/{replicate}/output.vcf",
+    shell:
+        "cp {input.vcf} {output.vcf}"

@@ -173,8 +173,12 @@ Combines simulated reads according to differerent user specified relative abunda
 
 ### variant_calling
 
-Maps the output from blend_reads to the reference genome(s) using BWA and then calls variants with GATK HaplotypeCaller 
-Maps the output from blend_reads to the reference genome(s) using BWA and then calls variants with GATK HaplotypeCaller 
+Maps the output from blend_reads to the reference genome(s) using BWA and then calls variants with the caller set by `variant_calling.caller` in the config:
+
+- `haplotypecaller` (default): GATK HaplotypeCaller in GVCF mode, using `variant_calling.ploidy`.
+- `mutect2`: GATK Mutect2 in tumor-only mode followed by FilterMutectCalls. Mutect2 estimates each variant's allele fraction instead of assuming a ploidy, which suits the mixed mutated/unmutated samples; calls that fail FilterMutectCalls are ignored during assessment.
+
+Each caller writes its own VCF (`haplotypecaller.vcf` or `mutect2.filtered.vcf`), and the selected one is copied to `output.vcf` for assessment.
 
 ### assess
 

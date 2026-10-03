@@ -56,7 +56,9 @@ found_variants = pd.read_csv(
 # QUAL is reported as "." where there's just <NON_REF> so here we split each alt on to their own row and then filter away <NON_REF> and the "." qualities
 found_variants = found_variants.set_index(['CHROM', 'POS', 'ID', 'REF', 'QUAL', 'FILTER', 'INFO', 'FORMAT', 'scenario'])["ALT"].str.split(",").explode().reset_index()
 found_variants = found_variants[found_variants["ALT"] != "<NON_REF>"]
-found_variants["QUAL"] = found_variants["QUAL"].astype("float") 
+# Mutect2 writes QUAL as "." for every record (its confidence is expressed in
+# FILTER by FilterMutectCalls), so a missing QUAL becomes NaN rather than an error
+found_variants["QUAL"] = pd.to_numeric(found_variants["QUAL"], errors="coerce")
 try:
     #read the tsv containing the ground truth
     ground_truth = pd.concat([pd.read_csv(path,sep="\t") for path in snakemake.input.ground_truth])
@@ -66,7 +68,12 @@ except ValueError:
     ground_truth = pd.DataFrame(columns=["CHROM","POS","REF","ALT"])
     log.info("No ground truth mutations found")
 
-found_variants = found_variants[(found_variants["QUAL"] >= snakemake.params.min_quality)]
+# Keep calls that passed the caller's filters (PASS, or "." when no filtering
+# was applied, as with HaplotypeCaller) and meet the QUAL threshold; calls
+# without a QUAL (Mutect2) are judged by FILTER alone
+passed_filters = found_variants["FILTER"].isin(["PASS", "."])
+passed_quality = (found_variants["QUAL"] >= snakemake.params.min_quality) | found_variants["QUAL"].isna()
+found_variants = found_variants[passed_filters & passed_quality]
 log.info(f"Parsed {found_variants.shape[0]} SNP calls from {snakemake.input.vcf}")
 
 #here we do an outer join which preserves values in both the left and right tables and add an indicator column
