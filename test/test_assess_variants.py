@@ -6,7 +6,7 @@ the *real* script end-to-end through the snakemake stub (the old suite tested
 a hand-copied replica of the logic, which could silently drift).
 """
 
-from harness import read_tsv, requires, run_script, tmpdir, write, write_vcf
+from harness import VCF_HEADER, read_tsv, requires, run_script, tmpdir, write, write_vcf
 
 GT_HEADER = "seq_id\tposition\tref_base\talt_base\n"
 
@@ -189,9 +189,90 @@ def test_scenario_without_mutated_references():
 
 
 @requires("pandas")
-def test_multiallelic_record_is_not_split():
-    """Documents current behaviour: 'G,T' is compared as one ALT string, so a
-    multi-allelic GATK record never matches a single-base truth ALT."""
+def test_multiallelic_record_is_split_per_alt():
+    """'G,T' is split into one call per ALT allele, so G matches the truth and
+    T is a false positive."""
     with tmpdir() as td:
         labels, _, _ = _assess(td, [("c1", 5, "A", "G")], [("c1", 5, "A", "G,T", 50)])
-        assert labels == {("c1", 5, "A", "G"): "FN", ("c1", 5, "A", "G,T"): "FP"}
+        assert labels == {("c1", 5, "A", "G"): "TP", ("c1", 5, "A", "T"): "FP"}
+
+
+@requires("pandas")
+def test_gvcf_reference_blocks_and_non_ref_alleles_are_ignored():
+    """HaplotypeCaller -ERC GVCF: <NON_REF>-only blocks have QUAL '.', and
+    variant records carry an extra <NON_REF> ALT."""
+    with tmpdir() as td:
+        vcf = write(td / "calls.g.vcf", VCF_HEADER +
+                    "c1\t1\t.\tA\t<NON_REF>\t.\t.\tEND=4\tGT:DP\t0/0:30\n"
+                    "c1\t5\t.\tA\tG,<NON_REF>\t300.6\t.\tDP=30\tGT:AD\t0/1:15,15,0\n"
+                    "c1\t6\t.\tC\t<NON_REF>\t.\t.\tEND=99\tGT:DP\t0/0:30\n",
+                    dedent=False)
+        _, rows = _run_vcf(td, vcf, [("c1", 5, "A", "G"), ("c1", 50, "C", "T")])
+        assert sorted(rows) == [["c1", "5", "A", "G", "TP", "rep1"],
+                                ["c1", "50", "C", "T", "FN", "rep1"]]
+
+
+# ── Mutect2 / FilterMutectCalls output ───────────────────────────────────────
+
+MUTECT2_HEADER = (
+    "##fileformat=VCFv4.2\n"
+    '##FILTER=<ID=PASS,Description="All filters passed">\n'
+    '##FILTER=<ID=weak_evidence,Description="Mutation does not meet likelihood threshold">\n'
+    "##source=FilterMutectCalls\n"
+    "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tmix_rep1\n"
+)
+
+
+def _mutect_vcf(td, records):
+    """records: (chrom, pos, ref, alt, filter) — QUAL is always '.' in Mutect2."""
+    return write(td / "mutect2.filtered.vcf", MUTECT2_HEADER + "".join(
+        f"{c}\t{p}\t.\t{r}\t{a}\t.\t{f}\tDP=40;TLOD=25.3\tGT:AD:AF\t0/1:20,20:0.5\n"
+        for c, p, r, a, f in records), dedent=False)
+
+
+def _run_vcf(td, vcf, truth_rows, min_quality=20):
+    gt = _truth(td / "gt.tsv", truth_rows)
+    out = td / "o.tsv"
+    run_script("assess_variants.py", input={"vcf": vcf, "ground_truth": [gt]},
+               output={"tsv": out}, params={"min_quality": min_quality, "replicate": "rep1"})
+    return read_tsv(out)
+
+
+@requires("pandas")
+def test_mutect2_pass_calls_count_despite_missing_qual():
+    with tmpdir() as td:
+        vcf = _mutect_vcf(td, [("c1", 5, "A", "G", "PASS"), ("c1", 9, "C", "T", "PASS")])
+        _, rows = _run_vcf(td, vcf, [("c1", 5, "A", "G")])
+        assert sorted((r[1], r[4]) for r in rows) == [("5", "TP"), ("9", "FP")]
+
+
+@requires("pandas")
+def test_mutect2_filtered_calls_are_ignored():
+    """Calls that fail FilterMutectCalls (e.g. weak_evidence) are not calls:
+    a filtered true mutation is a FN and a filtered artefact is not a FP."""
+    with tmpdir() as td:
+        vcf = _mutect_vcf(td, [("c1", 5, "A", "G", "weak_evidence"),
+                               ("c1", 9, "C", "T", "strand_bias;weak_evidence"),
+                               ("c1", 12, "G", "A", "PASS")])
+        _, rows = _run_vcf(td, vcf, [("c1", 5, "A", "G"), ("c1", 12, "G", "A")])
+        assert sorted((r[1], r[4]) for r in rows) == [("12", "TP"), ("5", "FN")]
+
+
+@requires("pandas")
+def test_mutect2_multiallelic_pass_record():
+    with tmpdir() as td:
+        vcf = _mutect_vcf(td, [("c1", 5, "A", "G,T", "PASS")])
+        _, rows = _run_vcf(td, vcf, [("c1", 5, "A", "T")])
+        assert sorted((r[3], r[4]) for r in rows) == [("G", "FP"), ("T", "TP")]
+
+
+@requires("pandas")
+def test_haplotypecaller_filter_column_is_respected_too():
+    """A non-PASS FILTER from any caller (e.g. after VariantFiltration) drops
+    the call even when its QUAL is high."""
+    with tmpdir() as td:
+        vcf = write(td / "c.vcf", VCF_HEADER +
+                    "c1\t5\t.\tA\tG\t500\tLowQD\t.\tGT\t0/1\n"
+                    "c1\t6\t.\tA\tG\t500\tPASS\t.\tGT\t0/1\n", dedent=False)
+        _, rows = _run_vcf(td, vcf, [("c1", 5, "A", "G")])
+        assert sorted((r[1], r[4]) for r in rows) == [("5", "FN"), ("6", "FP")]

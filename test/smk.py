@@ -201,8 +201,11 @@ def format_wildcards(pattern, values, strict=True):
     return out.replace("{{", "{").replace("}}", "}") if strict else out
 
 
-def pattern_regex(pattern):
-    """Compile an output pattern into a regex with named groups (default '.+')."""
+def pattern_regex(pattern, constraints=None):
+    """Compile an output pattern into a regex with named groups.  A wildcard's
+    regex comes from {name,regex} in the pattern, then *constraints* (the
+    rule's wildcard_constraints), then Snakemake's default '.+'."""
+    constraints = constraints or {}
     parts, last, seen = [], 0, set()
     for m in WILDCARD_RE.finditer(pattern):
         parts.append(re.escape(pattern[last:m.start()]))
@@ -210,7 +213,7 @@ def pattern_regex(pattern):
         if name in seen:
             parts.append(f"(?P={name})")
         else:
-            parts.append(f"(?P<{name}>{constraint or '.+'})")
+            parts.append(f"(?P<{name}>{constraint or constraints.get(name, '.+')})")
             seen.add(name)
         last = m.end()
     parts.append(re.escape(pattern[last:]))
@@ -322,7 +325,7 @@ TOP_DIRECTIVE_RE = re.compile(
     r"^(configfile|include|ruleorder|localrules|wildcard_constraints|workdir|report)\s*:\s*(.*)$")
 RULE_DIRECTIVE_RE = re.compile(r"^    (\w+)\s*:\s*(.*)$")
 EVALUATED = ("input", "output", "log", "params", "threads", "resources",
-             "conda", "script", "shell", "benchmark", "message")
+             "conda", "script", "shell", "benchmark", "message", "wildcard_constraints")
 KNOWN_DIRECTIVES = set(EVALUATED) | {
     "run", "shadow", "priority", "group", "wildcard_constraints", "retries",
     "container", "envmodules", "notebook", "wrapper", "cache", "localrule",
@@ -494,8 +497,9 @@ class Workflow:
         """[(rule, wildcard dict)] for every rule whose output matches *path*."""
         found = []
         for rule in self.rules.values():
+            constraints = rule.kwargs.get("wildcard_constraints", {})
             for pat in rule.patterns("output"):
-                m = pattern_regex(pat).match(path)
+                m = pattern_regex(pat, constraints).match(path)
                 if m:
                     found.append((rule, m.groupdict()))
                     break

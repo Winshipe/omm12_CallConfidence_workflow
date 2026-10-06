@@ -216,6 +216,8 @@ def validate_config(cfg, root=ROOT):
     vc = cfg.get("variant_calling") or {}
     req(isinstance(vc.get("threads"), int) and vc.get("threads") > 0,
         "variant_calling.threads: must be a positive integer")
+    req(str(vc.get("caller", "haplotypecaller")).lower() in ("haplotypecaller", "mutect2"),
+        "variant_calling.caller: must be 'haplotypecaller' or 'mutect2'")
     mq = (cfg.get("assessment") or {}).get("min_quality")
     req(_num(mq) and mq >= 0, "assessment.min_quality: must be a number >= 0")
     rep = cfg.get("report") or {}
@@ -245,6 +247,7 @@ def test_validator_catches_common_mistakes():
         "set both or neither": lambda c: c["simulation"].update(empirical_reads_R1="x.fq"),
         "not found: nowhere": lambda c: c["annotation"]["mmseqs_databases"].update(x="nowhere"),
         "window_size": lambda c: c["report"].update(window_size=-5),
+        "variant_calling.caller": lambda c: c["variant_calling"].update(caller="freebayes"),
     }
     for expected, mutate in mutations.items():
         cfg = real_config()
@@ -309,7 +312,7 @@ def test_snakefile_includes_exist_and_rules_are_unique():
     assert not wf.duplicate_rules, f"duplicate rule names: {wf.duplicate_rules}"
     included = {p.name for p in wf.files}
     for f in RULES.glob("*.smk"):
-        if f.name == "variant_calling_breseq.smk":       # documented alternative caller
+        if f.name == "variant_calling_breseq.smk":       # standalone module, not included
             continue
         assert f.name in included, f"{f.name} is not included by the Snakefile"
 
@@ -415,7 +418,7 @@ def test_dag_builds_for_shipped_config():
     assert counts["mutate_reference"] == n_refs * reps
     assert counts["simulate_reads"] == n_refs * reps * 2
     for rule in ("blend_reads", "bwa_index", "bwa_align", "gatk_haplotype_caller",
-                 "gatk_left_align_and_trim", "assess_variants"):
+                 "select_variant_calls", "assess_variants"):
         assert counts[rule] == n_scen * reps, (rule, counts)
     assert counts["aggregate_replicates"] == n_scen
     assert counts["generate_report"] == n_refs
@@ -441,21 +444,77 @@ def test_dag_builds_for_multi_reference_config_with_empirical_profile():
     assert "results/art_profile/empirical_R1.txt" in sim.input
 
 
-def test_calls_are_left_aligned_and_trimmed_before_assessment():
-    """HaplotypeCaller → raw.vcf → LeftAlignAndTrimVariants → output.vcf →
-    assess_variants, with the normaliser using the same reference."""
-    jobs, _, _ = real_dag()
+def _caller_dag(caller):
+    cfg = real_config()
+    if caller is not None:
+        cfg["variant_calling"]["caller"] = caller
+    with tmpdir() as td:
+        jobs, _, errors = smk.resolve_dag(smk.load_workflow(ROOT, cfg), cwd=td)
+    assert not errors, errors
+    return jobs
+
+
+def _caller_chain(jobs, assess):
+    """Rules from the VCF assess reads back to the BAM, nearest first."""
     by_output = {p: j for j in jobs for p in j.output}
+    chain, job = [], by_output[assess.input.vcf]
+    while job.rule.name != "bwa_align":
+        chain.append(job)
+        upstream = [by_output[p] for p in job.input if p in by_output
+                    and by_output[p].rule.name not in ("bwa_index",)]
+        job = upstream[0]
+    return chain
+
+
+def test_default_caller_is_haplotypecaller():
+    jobs = _caller_dag(None)
+    names = {j.rule.name for j in jobs}
+    assert "gatk_mutect2" not in names and "gatk_filter_mutect_calls" not in names
     for assess in (j for j in jobs if j.rule.name == "assess_variants"):
-        norm = by_output[assess.input.vcf]
-        assert norm.rule.name == "gatk_left_align_and_trim", norm.rule.name
-        raw = by_output[norm.input.vcf]
-        assert raw.rule.name == "gatk_haplotype_caller", raw.rule.name
-        assert norm.input.vcf.endswith("/raw.vcf")
-        assert norm.input.ref == raw.input.ref
-        shell = smk.render_shell(norm)
-        assert "gatk LeftAlignAndTrimVariants" in shell
-        assert f"--variant   {norm.input.vcf}" in shell and f"--output    {assess.input.vcf}" in shell
+        chain = _caller_chain(jobs, assess)
+        assert [j.rule.name for j in chain] == ["select_variant_calls", "gatk_haplotype_caller"]
+        assert chain[0].input.vcf.endswith("/haplotypecaller.vcf")
+        assert assess.input.vcf.endswith("/output.vcf")
+        shell = smk.render_shell(chain[1])
+        assert "gatk HaplotypeCaller" in shell and "-ERC GVCF" in shell
+
+
+def test_mutect2_caller_runs_mutect2_then_filter_mutect_calls():
+    jobs = _caller_dag("mutect2")
+    names = Counter(j.rule.name for j in jobs)
+    assert "gatk_haplotype_caller" not in names
+    reps, n_scen = real_config()["replicates"], len(real_config()["scenarios"])
+    assert names["gatk_mutect2"] == names["gatk_filter_mutect_calls"] == reps * n_scen
+    for assess in (j for j in jobs if j.rule.name == "assess_variants"):
+        select, filt, m2 = _caller_chain(jobs, assess)
+        assert (select.rule.name, filt.rule.name, m2.rule.name) == (
+            "select_variant_calls", "gatk_filter_mutect_calls", "gatk_mutect2")
+        assert select.input.vcf == filt.output.vcf and select.input.vcf.endswith("/mutect2.filtered.vcf")
+        # FilterMutectCalls needs the stats file Mutect2 writes next to its VCF
+        assert filt.input.stats == m2.output.stats == m2.output.vcf + ".stats"
+        assert filt.input.ref == m2.input.ref
+        m2_shell, filt_shell = smk.render_shell(m2), smk.render_shell(filt)
+        assert "gatk Mutect2" in m2_shell and f"--input                  {m2.input.bam}" in m2_shell
+        assert "--sample-ploidy" not in m2_shell
+        assert "gatk FilterMutectCalls" in filt_shell
+        assert f"--stats     {m2.output.stats}" in filt_shell
+        assert smk.render_shell(select) == f"cp {filt.output.vcf} {assess.input.vcf}"
+
+
+def test_caller_name_is_case_insensitive():
+    names = {j.rule.name for j in _caller_dag("Mutect2")}
+    assert "gatk_mutect2" in names
+
+
+def test_unknown_caller_is_rejected_when_workflow_loads():
+    cfg = real_config()
+    cfg["variant_calling"]["caller"] = "freebayes"
+    try:
+        smk.load_workflow(ROOT, cfg)
+    except ValueError as exc:
+        assert "freebayes" in str(exc) and "mutect2" in str(exc)
+    else:
+        raise AssertionError("an unknown caller must be rejected")
 
 
 def test_every_job_output_is_unique():
@@ -472,7 +531,7 @@ def test_every_job_shell_command_renders():
         cfg = _synthetic_config(td)
         jobs, _, errors = smk.resolve_dag(smk.load_workflow(ROOT, cfg), cwd=td)
     assert not errors
-    for job in jobs + real_dag()[0]:
+    for job in jobs + real_dag()[0] + _caller_dag("mutect2"):
         try:
             smk.render_shell(job)
         except Exception as exc:
@@ -500,7 +559,8 @@ def _commands(shell):
 
 
 def test_shell_tools_are_provided_by_rule_env():
-    for job in {j.rule.name: j for j in real_dag()[0]}.values():
+    all_jobs = real_dag()[0] + _caller_dag("mutect2")
+    for job in {j.rule.name: j for j in all_jobs}.values():
         shell = smk.render_shell(job)
         if not shell:
             continue
@@ -518,7 +578,7 @@ def test_shell_tools_are_provided_by_rule_env():
 # Shell-block lint
 # ═══════════════════════════════════════════════════════════════════════════════
 
-CONTINUATION_START = ("&>", ">", "2>", "|", "&&", "--")
+CONTINUATION_START = ("&>", ">", "2>", "|", "&&", "-", "{")
 ENV_VARS = {"SLURM_JOB_ID", "TMPDIR", "HOME", "PATH", "USER", "PWD"}
 
 
