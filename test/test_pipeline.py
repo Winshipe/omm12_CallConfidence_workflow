@@ -31,7 +31,6 @@ Test modules
   test_annotate_repeats.py    m8 → annotation TSV post-processing
   test_mmseqs_search.py       search orchestration with a fake `mmseqs`
   test_blend_reads.py         FASTQ subsampling / blending script
-  test_source_coverage.py     mutated vs unmutated coverage tracing tool
   test_rules.py               Python helpers and `run:` blocks inside the .smk files
   test_workflow.py            config validation, rule/file consistency, shell
                               placeholder checks and a dry-run DAG build
@@ -62,7 +61,6 @@ MODULES = [
     "test_annotate_repeats",
     "test_mmseqs_search",
     "test_blend_reads",
-    "test_source_coverage",
     "test_rules",
     "test_workflow",
     "test_integration",
